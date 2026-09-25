@@ -19,7 +19,7 @@ class SecurityRequest(Base):
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), nullable=False)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), nullable=False)
     environment: Mapped[Environment] = mapped_column(
-        SAEnum(Environment, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Environment, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     tool_id: Mapped[int] = mapped_column(ForeignKey("tools.id"), nullable=False)
@@ -28,7 +28,7 @@ class SecurityRequest(Base):
     # Nullable: a row exists the moment the agent submits the request;
     # the Gateway fills this in once Steps 1-4 (Section 11) complete.
     decision: Mapped[Decision | None] = mapped_column(
-        SAEnum(Decision, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Decision, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=True,
     )
 

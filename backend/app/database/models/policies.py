@@ -12,12 +12,12 @@ class Policy(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     role: Mapped[Role] = mapped_column(
-        SAEnum(Role, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Role, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     tool_id: Mapped[int] = mapped_column(ForeignKey("tools.id"), nullable=False)
     environment: Mapped[Environment] = mapped_column(
-        SAEnum(Environment, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Environment, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     action: Mapped[str] = mapped_column(String(32), nullable=False)

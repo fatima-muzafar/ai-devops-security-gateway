@@ -13,7 +13,7 @@ class Tool(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     tool_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     sensitivity: Mapped[Sensitivity] = mapped_column(
-        SAEnum(Sensitivity, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Sensitivity, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

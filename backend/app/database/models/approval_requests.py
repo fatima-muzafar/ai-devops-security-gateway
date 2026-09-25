@@ -15,7 +15,7 @@ class ApprovalRequest(Base):
         ForeignKey("security_requests.request_id"), nullable=False
     )
     status: Mapped[ApprovalStatus] = mapped_column(
-        SAEnum(ApprovalStatus, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(ApprovalStatus, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         default=ApprovalStatus.PENDING,
         nullable=False,
     )

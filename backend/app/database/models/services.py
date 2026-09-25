@@ -16,7 +16,7 @@ class Service(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     service_name: Mapped[str] = mapped_column(String(64), nullable=False)
     environment: Mapped[Environment] = mapped_column(
-        SAEnum(Environment, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Environment, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
 

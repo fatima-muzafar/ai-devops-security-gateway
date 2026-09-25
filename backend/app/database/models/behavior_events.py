@@ -15,12 +15,12 @@ class BehaviorEvent(Base):
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), nullable=False)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), nullable=False)
     environment: Mapped[Environment] = mapped_column(
-        SAEnum(Environment, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Environment, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     tool_id: Mapped[int] = mapped_column(ForeignKey("tools.id"), nullable=False)
     outcome: Mapped[EventOutcome] = mapped_column(
-        SAEnum(EventOutcome, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(EventOutcome, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     timestamp: Mapped[datetime] = mapped_column(

@@ -20,19 +20,19 @@ class RiskAssessment(Base):
     # Kept as three separate columns (not one score) so E2's evaluation
     # can show rule vs ML contribution separately.
     rule_risk_level: Mapped[RiskLevel] = mapped_column(
-        SAEnum(RiskLevel, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(RiskLevel, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     ml_risk_level: Mapped[RiskLevel] = mapped_column(
-        SAEnum(RiskLevel, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(RiskLevel, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     final_risk_level: Mapped[RiskLevel] = mapped_column(
-        SAEnum(RiskLevel, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(RiskLevel, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     decision: Mapped[Decision] = mapped_column(
-        SAEnum(Decision, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Decision, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     reasons: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

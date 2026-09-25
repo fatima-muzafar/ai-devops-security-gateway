@@ -14,7 +14,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[Role] = mapped_column(
-        SAEnum(Role, native_enum=False, values_callable=lambda e: [x.value for x in e]),
+        SAEnum(Role, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
