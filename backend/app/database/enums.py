@@ -40,3 +40,13 @@ class EventOutcome(str, enum.Enum):
     ALLOWED = "allowed"
     BLOCKED = "blocked"
     PENDING = "pending"
+
+
+class ChangeType(str, enum.Enum):
+    """decisions.md #7: one history table covers all three state-changing
+    mock-environment operations. Do not split into separate
+    restart_history / deployment_history tables — a restart and a deploy
+    are both 'a state transition on a service at a point in time.'"""
+    DEPLOY = "deploy"
+    RESTART = "restart"
+    ROLLBACK = "rollback"

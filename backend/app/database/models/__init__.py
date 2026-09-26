@@ -1,7 +1,7 @@
 """
 Import every model here. Alembic's autogenerate (and anything else that
 inspects Base.metadata) only sees tables whose model class has actually
-been imported somewhere. If you add an 11th table later and forget to
+been imported somewhere. If you add another table later and forget to
 add it here, autogenerate will silently skip it - no error, just a
 missing migration.
 """
@@ -15,6 +15,7 @@ from app.database.models.risk_assessments import RiskAssessment
 from app.database.models.approval_requests import ApprovalRequest
 from app.database.models.behavior_events import BehaviorEvent
 from app.database.models.incidents import Incident
+from app.database.models.service_state_history import ServiceStateHistory
 
 __all__ = [
     "User",
@@ -27,4 +28,5 @@ __all__ = [
     "ApprovalRequest",
     "BehaviorEvent",
     "Incident",
+    "ServiceStateHistory",
 ]
