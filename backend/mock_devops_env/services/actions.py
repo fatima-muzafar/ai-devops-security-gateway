@@ -42,10 +42,7 @@ def restart_service(db: Session, service: Service) -> ServiceStateHistory:
 
 
 def rollback_deployment(db: Session, service: Service) -> ServiceStateHistory:
-    """rollback_deployment(): Medium-High sensitivity (Section 12).
-    Changes current_version to known_good_version. Does NOT itself
-    change known_good_version — see the design-gap note in the reply
-    this file shipped with; unconfirmed pending your sign-off."""
+    """Does NOT itself change known_good_version — locked semantics, see decisions.md #9."""
     version_before = service.current_version
     status_before = service.status
 
@@ -69,13 +66,11 @@ def deploy_service(db: Session, service: Service, target_version: int) -> Servic
     """deploy_service(): High sensitivity (Section 12). Changes
     deployed/current version and records the deployment.
 
-    UNCONFIRMED DESIGN CHOICE (flagged, not in decisions.md yet): this
-    also sets known_good_version = the version being replaced, so a
-    later rollback reverts to "whatever was running immediately before
-    this deploy" (standard CI/CD "last known stable" semantics), rather
-    than always reverting to v1. Section 12/13 of the planning doc never
-    specifies this. Change or remove this line if you want option (a)
-    instead — "known_good_version never updates after seed."
+     known_good_version is set to the version being replaced (the pre-deploy
+     current_version), so a later rollback reverts to "whatever was running
+     immediately before this deploy" — standard CI/CD "last known stable"
+     semantics. Locked in decisions.md #9; do not change this without
+     updating that decision first.
     """
     if target_version <= 0:
         raise ValueError(
