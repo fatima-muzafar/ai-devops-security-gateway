@@ -118,13 +118,14 @@ Do NOT implement yet:
 
 ## Important
 - Follow Planning Revision 6.
-- Follow `docs/decisions.md` for locked decisions (12 entries locally;
-  confirm #11/#12 are pushed — see "Verify First").
+- Follow `docs/decisions.md` for locked decisions (12 entries as of
+  Phase 4 completion).
 - Do not reorder, remove, or add phases.
 - Do not redo completed Phase 1–4 work unless explicitly requested.
 
 ## Next Task
-Push Phase 4 code + `docs/decisions.md` #11/#12, record the real commit
-hash above, then start Phase 5: `main.py` bootstrap + one HTTP endpoint
-implementing the placeholder ALLOW/BLOCK rule + `execute_tool()` call +
-`service_state_history`-based test verification.
+Confirm the Phase 5 open question (tool = `restart_service`, placeholder
+rule = BLOCK if environment == production else ALLOW — both already
+confirmed), then start Phase 5 implementation: `main.py` bootstrap + one
+HTTP endpoint + `execute_tool()` call + `service_state_history`-based
+test verification.
