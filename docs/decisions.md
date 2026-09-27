@@ -155,3 +155,37 @@ transition history lives in the unified `service_state_history` table
 these with no clear ownership boundary. Folder removed as of Phase 4
 cleanup; do not recreate it unless a future phase has a concrete,
 distinct reason to.
+
+## 14. Gateway HTTP Request Contract — Argument Key Naming
+Section 17's worked example uses `"service"` as the arguments key
+(`{"service": "payment-service", "environment": "production"}`), but
+the schema actually implemented in Phase 4 (`mcp/schemas.py`,
+`ServiceTargetArgs`) uses `service_name`. This was never reconciled in
+the planning doc.
+
+Resolved: `POST /api/gateway/tool-request`'s `arguments` object uses
+`service_name`, matching the implemented schema — not Section 17's
+example key. `execute_tool()` requires `service_name` to resolve the
+target `Service`; the doc's example predates the actual schema and is
+superseded by it.
+
+This is now the locked request contract. Phase 6 (LangChain agent
+generating structured tool requests) and Phase 7 (real Security
+Gateway) must produce/consume `arguments.service_name`, not
+`arguments.service`.
+
+Implementation: `backend/app/main.py`, `ToolRequestIn`.
+
+## 15. Gateway HTTP Endpoint — Tool-Agnostic by Design
+Phase 5's endpoint dispatches through `execute_tool()` generically
+(any registered tool name), rather than being hardcoded to accept only
+`restart_service`. This extends decision #11's existing design intent
+(`execute_tool()` already supports all five tools) up to the HTTP
+layer, rather than adding a redundant tool-name check that duplicates
+what the tool registry already enforces.
+
+STATUS.md's Phase 5 scope ("only restart_service needs to be exercised
+through the new HTTP path") governs *test coverage*, not what the
+endpoint accepts — an unregistered/disabled tool is already correctly
+rejected via `MCPError` → HTTP 400 (decisions.md #11's error
+taxonomy), independent of this endpoint.
