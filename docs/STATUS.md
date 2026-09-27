@@ -10,8 +10,7 @@ Phase 5 — Skeleton End-to-End Path (Single Tool, ALLOW/BLOCK Only, No ML)
 - Phase 4 — MCP Server and Five DevOps Tools
 
 ## Current Repo State
-- Last verified commit: `<FILL IN — run 'git log --oneline -5' after
-  pushing Phase 4 and paste the top hash here>`
+- Last verified commit: `5708b97`
 - Planning version: Revision 6
 - Phase 1 through Phase 4 are complete.
 - Database schema and migrations are implemented and verified (11 tables
