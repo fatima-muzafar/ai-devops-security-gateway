@@ -142,3 +142,16 @@ folder, named `generator.py` (parallel to `services/actions.py`) —
 `mock_devops_env/metrics/generator.py::generate_metrics()`. `app/mcp/tools.py`
 imports both qualified (`env_logs`, `env_metrics`), same pattern as
 `env_actions` for the three state-changing tools.
+
+## 13. mock_devops_env/state — Not Used, Superseded
+Section 28's repository structure lists `mock_devops_env/state/` as a
+folder, but no phase (Section 27) ever assigns work to it, and no
+decisions.md entry ever referenced it. Resolved: this folder is not
+needed. State tracking is fully handled by two things already built in
+Phase 3: (1) current state lives directly on the `Service` model
+(`current_version`, `known_good_version`, `status`), and (2) state
+transition history lives in the unified `service_state_history` table
+(decisions.md #7). A separate `state/` module would duplicate one of
+these with no clear ownership boundary. Folder removed as of Phase 4
+cleanup; do not recreate it unless a future phase has a concrete,
+distinct reason to.
