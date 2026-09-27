@@ -1,88 +1,131 @@
 # Security Gateway FYP — Project Status
 
 ## Current Phase
-Phase 4 — MCP Server and Five DevOps Tools
+Phase 5 — Skeleton End-to-End Path (Single Tool, ALLOW/BLOCK Only, No ML)
 
 ## Completed
 - Phase 1 — Project setup and repository structure
 - Phase 2 — PostgreSQL schema, SQLAlchemy models, Alembic migrations
 - Phase 3 — Stateful Mock DevOps Environment
+- Phase 4 — MCP Server and Five DevOps Tools
 
 ## Current Repo State
-- Last verified commit: `3727cb2`
+- Last verified commit: `<FILL IN — run 'git log --oneline -5' after
+  pushing Phase 4 and paste the top hash here>`
 - Planning version: Revision 6
-- Phase 1, Phase 2, and Phase 3 are complete.
+- Phase 1 through Phase 4 are complete.
 - Database schema and migrations are implemented and verified (11 tables
-  as of Phase 3 — see `docs/decisions.md` #7).
+  — unchanged since Phase 3; Phase 4 added no new tables, see
+  `docs/decisions.md` #7).
 - Seed data (4 users, 6 services) is implemented, idempotent, and
   verified against `docs/decisions.md` #8.
 - Service state mutation (restart/rollback/deploy) and history logging
   are implemented in `backend/mock_devops_env/services/actions.py` and
-  covered by unit tests in `tests/`.
+  covered by unit tests.
+- MCP server, tool registry, and the five tools are implemented in
+  `backend/app/mcp/` and `backend/mock_devops_env/logs|metrics/`, and
+  covered by `tests/test_mcp_tools.py` — 12 tests, all passing (user-
+  verified).
+- `docs/decisions.md` has 12 entries  ( since Phase 5 builds directly on the `execute_tool()` contract #11 documents).
 
 ## Verify First
 Before trusting this file, `git log --oneline -5` and confirm the
 latest commit matches "Last verified commit" above.
 
-## Phase 3 Summary (complete)
+## Phase 4 Summary (complete)
 What was built:
-- `service_state_history` table — unified restart/rollback/deploy log
-  (`docs/decisions.md` #7).
-- Seed script (`backend/app/database/seed.py`) — 4 users, 6 services,
-  ownership mapping locked in `docs/decisions.md` #8.
-- Mutation logic (`backend/mock_devops_env/services/actions.py`) —
-  `restart_service()`, `rollback_deployment()`, `deploy_service()`.
-  `known_good_version` semantics locked in `docs/decisions.md` #9.
-- Unit tests (`tests/test_seed.py`, `tests/test_restart_rollback.py`,
-  `tests/test_deploy.py`) — 11 tests, all passing. Scope note in
-  `docs/decisions.md` #10: these are per-phase unit tests, NOT the M8 /
-  Phase 17 research evaluation (E1–E6). Do not conflate the two in the
-  final report.
+- `backend/app/mcp/schemas.py` — Pydantic argument schemas per tool
+  (`TOOL_ARG_SCHEMAS`), also used to auto-generate `Tool.schema_def`.
+- `backend/app/mcp/tools.py` — the five tool functions
+  (`get_logs`, `get_metrics`, `restart_service`, `rollback_deployment`,
+  `deploy_service`). The three state-changing tools wrap
+  `mock_devops_env.services.actions` (Phase 3); the two read-only tools
+  wrap the mock-environment log/metric generators (below).
+- `backend/mock_devops_env/logs/generator.py` and
+  `backend/mock_devops_env/metrics/generator.py` — simulated content for
+  `get_logs()`/`get_metrics()`, deterministic per `(service.id,
+  current_version)`. Placed under `mock_devops_env/` per Section 28's
+  structure, not under `app/mcp/` — `docs/decisions.md` #12.
+- `backend/app/mcp/registry.py` — `TOOL_REGISTRY` (dispatch map +
+  sensitivity) and `seed_tools()`, an idempotent, update-in-place seeder
+  for the `tools` table (`get_logs`/`get_metrics` = LOW,
+  `restart_service` = MEDIUM, `rollback_deployment`/`deploy_service` =
+  HIGH — `docs/decisions.md` #1).
+- `backend/app/mcp/server.py` — `execute_tool()`, the single dispatch
+  entrypoint: checks the tool is registered + enabled, validates
+  arguments, resolves the target `Service`, calls the matching tool
+  function. Plain importable Python — not an HTTP endpoint
+  (`docs/decisions.md` #11).
+- Unit tests (`tests/test_mcp_tools.py`) — 12 tests, all passing.
 
-What Phase 3 deliberately did NOT include (correctly deferred):
-- Simulated log/metric content generation for `get_logs()` /
-  `get_metrics()` — these are read-only MCP tools, built in Phase 4.
-- Any MCP tool wiring, Gateway logic, auth, or ML — untouched, per the
-  Phase 3 Boundary below (still accurate, kept for reference).
+What Phase 4 deliberately did NOT include (correctly deferred):
+- Any HTTP endpoint (`POST /mcp/tools/execute`, Section 17) — no
+  `backend/app/main.py` or FastAPI app exists yet. The HTTP surface is
+  Phase 5's job (`docs/decisions.md` #11).
+- Any authentication, identity, ownership, policy, rule risk, or ML —
+  `execute_tool()` performs no security decision. Calling it directly
+  means "this action is being treated as pre-authorized," valid only for
+  Phase 4 testing (FR-15).
+- The LangChain agent (Phase 6) and human approval workflow (Phase 11)
+  — untouched.
 
-## Phase 4 Goal
-Build the MCP server and the five registered DevOps tools:
-- `get_logs()` — Low sensitivity, read-only. Needs simulated log content
-  (not built in Phase 3 — build it here).
-- `get_metrics()` — Low sensitivity, read-only. Needs simulated metric
-  content (same as above).
-- `restart_service()` — Medium sensitivity. Wire to
-  `mock_devops_env.services.actions.restart_service()`.
-- `rollback_deployment()` — Medium-High sensitivity. Wire to
-  `mock_devops_env.services.actions.rollback_deployment()`.
-- `deploy_service()` — High sensitivity. Wire to
-  `mock_devops_env.services.actions.deploy_service()`.
-- Verify state transitions end-to-end through the MCP layer (Section 27,
-  Phase 4).
-- Tool registry entries (name, schema, sensitivity, enabled) per
-  Section 12 / the `tools` table.
+## Phase 5 Goal
+Per Section 27: "Skeleton end-to-end path: one tool, ALLOW/BLOCK only,
+no ML." Purpose: prove the request → decision → MCP →
+observable-state-change pipeline works end-to-end over HTTP, before
+Phase 7 builds the real Security Gateway on top of it. A walking
+skeleton, not a preview of the final Gateway.
 
-## Phase 4 Boundary
-Phase 4 is ONLY the MCP server and the five tools.
+**Confirmed for this phase:**
+- Tool: `restart_service` (Section 6's canonical worked example,
+  Section 18 Scenario B, Section 9's baseline ALLOW case).
+- Decision rule: `BLOCK if environment == production else ALLOW`.
+  Explicitly a temporary placeholder — this is NOT Section 8's real
+  policy engine, NOT ownership/role checking. That's Phase 8's job.
+  Do not let this rule survive past Phase 5; Phase 8 replaces it
+  entirely, it doesn't extend it.
+
+Build:
+- `backend/app/main.py` — first FastAPI app bootstrap for this repo.
+- One HTTP endpoint (Section 17: `POST /api/gateway/tool-request`)
+  accepting a structured tool request (Section 17's example payload:
+  `request_id`, `user_id`, `tool`, `arguments`), applying the placeholder
+  rule above, and on ALLOW calling `app.mcp.server.execute_tool()`.
+
+**Verification method (corrected):** do NOT verify success by diffing
+`service.status` before/after. A freshly seeded service is already
+`"healthy"` (Section 13 seed state), so a restart on it leaves `status`
+unchanged either way — a status diff proves nothing on a healthy
+service. Verify instead by asserting a new `service_state_history` row
+was created with `change_type='restart'` and matching `service_id`
+(decisions.md #7) — that row's existence is what actually proves the
+HTTP request reached MCP and executed, independent of whether the
+restart happened to change any visible field.
+
+## Phase 5 Boundary
+Phase 5 is ONLY the minimal end-to-end HTTP skeleton for `restart_service`.
 
 Do NOT implement yet:
-- LangChain agent → Phase 6
-- Security Gateway (auth, validation, policy, risk, decision) → Phase 7+
-- Authentication/policy/risk logic → Phase 8+
-- ML → Semester 2
-
-MCP accepts execution only from the trusted Gateway path in the finished
-system (FR-15) — but the Gateway doesn't exist yet (Phase 7+), so Phase 4
-tools will necessarily be callable directly for testing purposes. This is
-expected and temporary; do not treat it as the final trust boundary.
+- The LangChain agent → Phase 6 (the endpoint is called directly via
+  pytest/curl/Postman — no agent exists yet).
+- Real identity, ownership, or environment-policy checks → Phase 8.
+- Rule-based risk engine → Phase 9.
+- ML / Isolation Forest → Phase 10, Semester 2.
+- APPROVAL_REQUIRED / human approval workflow → Phase 11 (ALLOW/BLOCK
+  only, per Section 27 — no third decision state yet).
+- HTTP wiring for the other four tools — `execute_tool()` already
+  supports all five (Phase 4); only `restart_service` needs to be
+  exercised through the new HTTP path to prove the skeleton works.
 
 ## Important
 - Follow Planning Revision 6.
-- Follow `docs/decisions.md` for locked decisions (10 entries as of
-  Phase 3 completion).
+- Follow `docs/decisions.md` for locked decisions (12 entries locally;
+  confirm #11/#12 are pushed — see "Verify First").
 - Do not reorder, remove, or add phases.
-- Do not redo completed Phase 1/2/3 work unless explicitly requested.
+- Do not redo completed Phase 1–4 work unless explicitly requested.
 
 ## Next Task
-Start Phase 4 implementation: MCP server + five tool definitions, per
-the Phase 4 Goal above.
+Push Phase 4 code + `docs/decisions.md` #11/#12, record the real commit
+hash above, then start Phase 5: `main.py` bootstrap + one HTTP endpoint
+implementing the placeholder ALLOW/BLOCK rule + `execute_tool()` call +
+`service_state_history`-based test verification.

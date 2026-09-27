@@ -103,3 +103,42 @@ Implementation: `backend/mock_devops_env/services/actions.py`.
 Basic unit tests written per-phase as code is built; M8/Phase 17 remains
 the dedicated research-evaluation phase (E1–E6) — these are not the same
 activity.
+
+## 11. MCP Server Scope (Phase 4)
+- Phase 4's "MCP server" is an importable Python dispatcher
+  (`execute_tool()` in `backend/app/mcp/server.py`), NOT an HTTP
+  endpoint. Section 17's `POST /mcp/tools/execute` route is deferred —
+  it requires a FastAPI app bootstrap (`backend/app/main.py`,
+  `backend/app/api/`) that doesn't exist yet and isn't listed in
+  STATUS.md's Phase 4 Goal. The HTTP surface lands in Phase 5, whose "skeleton end-to-end path: one tool, ALLOW/BLOCK only, no ML" is definitionally the first point an HTTP request needs to reach MCP. Phase 7 then adds the Gateway in front of that existing route — it does not create the route.
+- `Tool.schema_def` is populated from each tool's Pydantic model via
+  `.model_json_schema()`, not a hand-maintained dict, so the DB schema
+  and the real validation logic cannot drift apart.
+- `seed_tools()` differs from `seed.py`'s user/service seeding on
+  purpose: it updates `sensitivity` in place on re-run (so tuning a
+  tool's sensitivity in `registry.py` propagates to the DB without a
+  migration), but never force-sets `enabled = True` on an existing row —
+  an admin-disabled tool stays disabled across reseeds. This asymmetry
+  from `seed.py`'s skip-only pattern is deliberate, not an inconsistency
+  between the two scripts.
+- MCP dispatch errors (`ToolNotFoundError`, `ServiceNotFoundError`, etc.)
+  are a separate error taxonomy from Gateway ALLOW/BLOCK/APPROVAL_REQUIRED
+  decisions — Section 11's decision engine isn't running code yet. "MCP
+  couldn't dispatch the call" is not a security decision and must not be
+  conflated with one once the Gateway exists.
+- `get_logs()` / `get_metrics()` simulated content is deterministic from
+  `(service.id, current_version)` — same version always returns the same
+  simulated logs/metrics. Intentionally simple and final: no Section 10
+  ML feature depends on log/metric *content*, only on request *patterns*
+  (frequency, sequences, timing) captured later via `behavior_events`.
+  Do not add anomalous-content generation here — if ML ever needs richer
+  signal, it comes from behavioral features, not simulated log text.
+
+  ## 12. mock_devops_env/logs and /metrics — File Naming
+Section 28 names the `logs/` and `metrics/` folders under
+`mock_devops_env/` but not the file inside each. Resolved: one file per
+folder, named `generator.py` (parallel to `services/actions.py`) —
+`mock_devops_env/logs/generator.py::generate_logs()` and
+`mock_devops_env/metrics/generator.py::generate_metrics()`. `app/mcp/tools.py`
+imports both qualified (`env_logs`, `env_metrics`), same pattern as
+`env_actions` for the three state-changing tools.

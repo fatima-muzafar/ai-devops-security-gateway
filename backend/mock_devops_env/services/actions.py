@@ -81,7 +81,7 @@ def deploy_service(db: Session, service: Service, target_version: int) -> Servic
     version_before = service.current_version
     status_before = service.status
 
-    service.known_good_version = service.current_version  # see UNCONFIRMED note above
+    service.known_good_version = service.current_version
     service.current_version = target_version
     service.status = "healthy"
 
