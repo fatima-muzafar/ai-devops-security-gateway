@@ -189,3 +189,130 @@ through the new HTTP path") governs *test coverage*, not what the
 endpoint accepts — an unregistered/disabled tool is already correctly
 rejected via `MCPError` → HTTP 400 (decisions.md #11's error
 taxonomy), independent of this endpoint.
+
+## Phase 6 Decisions — LangChain DevOps Agent + LLM Integration
+
+## 16. LLM Provider — Gemini (Free Tier)
+Section 27 names "LLM API" generically; provider was never fixed. Resolved:
+Google Gemini, via Google AI Studio's free-tier API key — zero cost, no
+billing account required.
+
+Trade-off accepted knowingly: free tier is rate-limited
+(requests/minute). Fine for Phase 6 development and demo use. Revisit if
+a later phase (e.g. bulk ML/evaluation trials, Section 25) needs high
+request volume against the LLM itself — unlikely, since E1–E6 generate
+*tool-request* traffic programmatically, not LLM calls per trial.
+
+Key stored in `backend/.env` as `GOOGLE_API_KEY`, which must already be
+in `.gitignore` (same pattern as other secrets per `decisions.md` #8's
+placeholder-password handling).
+
+## 17. Agent Tool Exposure — All Five Tools, Limited Test Scope
+The agent is given structured-request-generation ability for all five
+MCP tools (`get_logs`, `get_metrics`, `restart_service`,
+`rollback_deployment`, `deploy_service`), sourced directly from the
+existing `mcp/schemas.py` Pydantic schemas (`TOOL_ARG_SCHEMAS`) — no
+duplicate schema definitions.
+
+Phase 6 *testing*, however, stays narrow: `restart_service` (state-
+changing, matches Phase 5's existing coverage) and `get_logs` (read-
+only, exercises a second tool type). The other three tools are reachable
+through the agent but not exercised by Phase 6 tests — same scoping
+principle as `decisions.md` #15 (execute_tool() supports all five; a
+given phase only needs to *test* what proves that phase's point).
+
+## 18. `/api/chat` Endpoint — Built in Phase 6
+Section 17 lists `POST /api/chat` ("Developer <-> DevOps Agent") but
+Section 27's phase list doesn't assign it explicitly. Resolved: built in
+Phase 6, alongside the agent itself — without it, the agent has no real
+entry point to test against (Phase 5's endpoint was tested directly via
+TestClient with no agent in front of it; Phase 6 needs the reverse).
+
+Per `STATUS.md`'s existing open item: whether this joins
+`POST /api/gateway/tool-request` under a shared `app/api/` router module
+remains undecided, revisited only when actual need forces it (two
+routes now exist — this may be that trigger, but is not decided here).
+
+## 19. Placeholder Identity — `user_id` / `agent_id`
+No real authentication exists yet (Phase 8's job). Resolved for Phase 6:
+`/api/chat` accepts `user_id` as a plain, unvalidated field in the
+request body. `agent_id` is a hardcoded constant in the agent's own code
+(`"AG001"`, matching Section 17's worked example) — not supplied by the
+caller, since there is exactly one agent (Section 2, "Agent: One
+autonomous DevOps AI agent").
+
+Same trust posture as Phase 5's placeholder decision rule: input is
+taken at face value. Phase 8 replaces this with real auth; it does not
+extend this placeholder.
+
+## 20. `request_id` Generation — Owned by the Chat Endpoint, Not the Agent
+Resolved: `/api/chat` generates a UUID `request_id` per incoming HTTP
+request, before invoking the agent. The agent itself does not generate
+request IDs.
+
+Reason: request tracking (Section 4: "Request IDs connect the agent
+request, Gateway checks, risk assessment, approval, MCP execution,
+state change, and audit evidence") is an HTTP/system-layer
+responsibility, not a reasoning-layer one — keeps the agent's job purely
+"understand + propose a tool call," consistent with Section 6's agent
+responsibilities list.
+
+## 21. Conversation History — In-Memory Only, No New DB Table
+Explicitly considered and rejected: a persistent chat/conversation table.
+
+Reasoning: conversation *content* (what the developer typed) is not a
+Section 10 ML feature input — no behavioral feature depends on message
+text, only on tool-request *patterns* (frequency, sequence, timing),
+which `behavior_events` already exists to capture (Section 16), starting
+Phase 10. Adding a chat-history table now would (a) duplicate what
+`behavior_events` is designed to own once Phase 10 builds it, and (b)
+is not listed among Section 16's 11 tables — a genuine scope addition,
+not a clarification, and therefore out of scope per the project's own
+"do not add modules/tables unless explicitly asked" rule.
+
+Phase 6 conversation context (for the LLM's own multi-turn understanding
+within one session) is held in memory only, not persisted. If a later
+phase needs persistent behavioral logging, that is `behavior_events`
+(Phase 10) — not a new table invented here.
+
+## 22. Agent Design Pattern — Structured Tool-Calling via `bind_tools`
+Resolved: the agent uses LangChain's structured tool-calling
+(`bind_tools`), backed by Gemini's native function-calling, with tool
+schemas sourced from `mcp/schemas.py`. No custom prompt-parsing or
+regex-based intent extraction is written.
+
+Matches Section 7's intent directly: "LangChain... simplifies agent
+orchestration, prompt management, tool schemas, and model/tool
+interaction without requiring the team to build a custom agent
+framework."
+
+## 23. Gateway Decision Relay — Verbatim `reason`, No New Explanation Logic
+When the Gateway returns BLOCK (or a non-ALLOW outcome generally), the
+agent relays the Gateway's own `reason` field (already part of Section
+17's response shape) to the developer in natural language — it does not
+generate its own independent explanation of why the action was denied.
+
+Reason: the Gateway is the authoritative source of the decision and its
+justification (Section 5: Gateway is the security boundary); having the
+agent re-derive or guess at a reason risks the agent's explanation
+drifting from the Gateway's actual logic, especially once Phase 8/9 add
+real policy and risk reasons.
+
+## 24. Phase 6 Test Strategy — LLM Responses Are Mocked, Not Live
+Automated tests (`pytest`) for the agent do not call the real Gemini
+API. The LLM's tool-call output (LangChain's `AIMessage` with
+`tool_calls`) is mocked/stubbed in tests, so the suite stays
+deterministic, fast, and independent of Gemini's free-tier rate limit
+(`docs/decisions.md` #16) — especially important since the full suite
+is re-run repeatedly (as it was after Phase 5, 26/26).
+
+This does not replace real-world verification: a one-off manual smoke
+test (curl/Postman against a running `uvicorn` instance, hitting the
+real Gemini API) is done separately, outside the automated suite, to
+confirm the actual integration works end-to-end. That manual check is
+not part of `pytest` and is not repeated on every test run.
+
+Scope: this governs Phase 6's own agent-level tests only. It does not
+set a project-wide policy about mocking external services in future
+phases (e.g. Phase 10's ML work) — that gets decided when it's actually
+relevant.
