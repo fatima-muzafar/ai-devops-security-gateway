@@ -316,3 +316,20 @@ Scope: this governs Phase 6's own agent-level tests only. It does not
 set a project-wide policy about mocking external services in future
 phases (e.g. Phase 10's ML work) — that gets decided when it's actually
 relevant.
+
+## 25. API Routing Structure — Split into app/api/ Router Modules
+Resolved the question STATUS.md left open at the end of Phase 5. That
+point has now arrived: Phase 6 adds a second route (`/api/chat`).
+
+Decision: routes move into `backend/app/api/` — matching Section 28's
+repository structure, which already lists `api/` as a sibling of
+`agent/`, `gateway/`, `mcp/` under `app/`. This is pre-existing planned
+structure, not a new architectural call; Phase 5 simply hadn't reached
+the trigger condition (more than one route) to justify filling it in.
+
+- `backend/app/api/gateway.py` — existing
+  `POST /api/gateway/tool-request`, moved out of `main.py`, wrapped in
+  an `APIRouter()`.
+- `backend/app/api/chat.py` — new `POST /api/chat`.
+- `backend/app/main.py` — becomes pure bootstrap: `FastAPI()` instance
+  + `include_router()` calls only.

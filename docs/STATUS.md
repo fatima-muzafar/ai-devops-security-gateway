@@ -13,6 +13,8 @@ implementation not yet started)
 
 ## Current Repo State
 - Last verified commit: `a2cccae`
+"Docs-only commits (no backend/ changes) do not require a hash update here — this field tracks the last code-verified commit, not literal HEAD."
+
 - Planning version: Revision 6
 - Phase 1 through Phase 5 are complete.
 - Database schema and migrations are implemented and verified (11 tables
