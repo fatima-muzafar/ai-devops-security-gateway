@@ -333,3 +333,85 @@ the trigger condition (more than one route) to justify filling it in.
 - `backend/app/api/chat.py` — new `POST /api/chat`.
 - `backend/app/main.py` — becomes pure bootstrap: `FastAPI()` instance
   + `include_router()` calls only.
+
+  <!-- APPEND to docs/decisions.md, after #25. Written BEFORE code (standing rule). -->
+
+## 26. Agent -> Gateway Transport — HTTP via an Injected `GatewayClient`
+Section 4/7/17 draw the path as Agent -> `POST /api/gateway/tool-request`.
+Resolved: the agent talks to the Gateway through a thin `GatewayClient`
+wrapping an httpx-compatible client (`.post(path, json=...)`). Production
+uses a real `httpx.Client` against `GATEWAY_BASE_URL` (default
+`http://127.0.0.1:8000`); tests inject Starlette's `TestClient(app)`
+(which is an httpx client), so no network or second server is needed.
+
+Rejected: calling the Gateway handler as an in-process Python function.
+It would make `app/agent/` import Gateway/MCP-adjacent code, so the
+"agent never touches MCP" boundary (Section 5/6) would rest on
+discipline instead of on an HTTP seam. Phase 7 will also move Gateway
+logic into `app/gateway/`; an HTTP seam means the agent does not change.
+
+Consequence: `POST /api/chat` MUST be a sync `def` endpoint. An
+`async def` handler making a blocking httpx call back into the same
+uvicorn event loop would deadlock.
+
+Also: Gemini model name comes from `GEMINI_MODEL` (default in
+`agent/llm.py`), not hardcoded, so a retired free-tier model name is an
+`.env` change, not a code change.
+
+## 27. Agent Turn Semantics — One Tool Call per Turn
+- At most ONE tool call is submitted to the Gateway per chat turn. If the
+  model emits several, the first is submitted; the rest are dropped and
+  the reply says so. (Executing several would need one Gateway
+  `request_id` each — see below — and is Phase 7+ scope at the earliest.)
+- ALLOW: the Gateway result is fed back to the LLM (one extra LLM call)
+  to produce the natural-language reply (Section 6). Any tool call the
+  model emits in that second response is IGNORED and logged — no chained
+  execution in Phase 6.
+- Non-ALLOW (BLOCK, or HTTP 400/422 from the Gateway): NO second LLM
+  call; the Gateway's own `reason` (or `detail` for HTTP errors) is
+  relayed verbatim (extends #23).
+- If the second LLM call fails AFTER an ALLOW, the tool has already run.
+  The agent returns a deterministic "ALLOWED and executed, summary
+  unavailable" reply with HTTP 200 — never a 5xx, because a 5xx invites a
+  retry of a state-changing action. A failure of the FIRST LLM call
+  (nothing executed) returns HTTP 502.
+- `request_id` = `uuid.uuid4().hex` (32 chars), not the hyphenated form.
+  Clarifies #20: `security_requests.request_id` is `String(32)` (#2) and
+  a hyphenated UUID is 36 chars.
+- KNOWN CONSEQUENCE for Demo 8 (prompt injection, Section 29): with
+  injected log content, the agent cannot propose a follow-on tool call
+  after reading logs, because tool calls after a tool result are ignored.
+  Revisit before Demo 8/E4 (needs a multi-step loop and a per-request
+  Gateway id scheme). Not solved here on purpose.
+
+## 28. Agent Module Layout — Flat, Not Section 28's Subfolders
+Section 28 lists `agent/[prompts/, schemas/, langchain_agent/]`. Resolved:
+flat module, same reasoning as #13 — three one-file packages would be
+indirection with no ownership boundary:
+`agent/prompts.py`, `agent/tools.py` (tool specs generated from
+`mcp/schemas.py`; no `schemas/` folder because #17 forbids duplicate
+schema definitions), `agent/gateway_client.py`, `agent/llm.py`,
+`agent/devops_agent.py`.
+
+Tool specs are passed to `bind_tools` as dicts (`name`, `description`,
+`parameters`), NOT as the Pydantic classes — passing the classes would
+name the functions `GetLogsArgs` etc. `$ref`/`$defs` are inlined because
+Gemini function declarations do not reliably accept JSON-Schema refs
+(the `Environment` enum is emitted as a `$ref` by Pydantic).
+
+## 29. Conversation History — Keyed by `user_id`, Bounded
+Resolves how #21's in-memory history is keyed: by `user_id` (no
+`session_id` field added to `/api/chat`), process-local dict, last 20
+messages, storing only the developer's text and the agent's final reply
+(not tool-call/ToolMessage internals). Lost on restart; not shared across
+workers; `user_id` is unvalidated (#19), so any caller can write into any
+user's context. Acceptable placeholder; Phase 8 replaces identity.
+
+## 30. System Prompt Contains No Security Instructions
+The agent's system prompt describes the role, the tools, the services and
+the one-tool-per-turn limit. It deliberately does NOT say "never touch
+production" or "check permissions". Reason: Section 25 E1/E4 measure what
+the Gateway prevents. A prompt that makes the agent self-censor shrinks
+the set of unsafe requests the agent proposes, which understates the
+unprotected-baseline unauthorized-execution rate and muddies E4. Any
+future prompt change must keep this property.
