@@ -415,3 +415,131 @@ the Gateway prevents. A prompt that makes the agent self-censor shrinks
 the set of unsafe requests the agent proposes, which understates the
 unprotected-baseline unauthorized-execution rate and muddies E4. Any
 future prompt change must keep this property.
+
+<!-- APPEND to docs/decisions.md, after #30. Written BEFORE code (standing rule). -->
+
+## Phase 7 Decisions -- Full Security Gateway and Request IDs
+
+## 31. Phase 7 / Phase 8 Boundary
+Section 27 names Phase 7 "Full Security Gateway and request IDs" and Phase 8
+"Authentication, identity, policy, ownership, environment checks". Resolved:
+
+Phase 7 implements, for real:
+- the Gateway pipeline as an orchestrator of ordered stages (Section 8) with
+  hard-check short-circuit (Section 11 Step 1) and ALLOW/BLOCK decisions;
+- request_id rules (#36);
+- validation: tool registered + enabled, arguments schema (TOOL_ARG_SCHEMAS),
+  target service resolves;
+- identity LOOKUP: `user_id` -> `users.username`, `agent_id` ->
+  `agents.agent_name` (status "active"); unknown -> BLOCK. This is identity
+  resolution (needed so the audit row's foreign keys can be filled), NOT
+  authentication: no password, no JWT, anyone can still claim any username;
+- audit persistence in `security_requests` (#32, #35);
+- the internal MCP HTTP seam (#37).
+
+Phase 7 does NOT implement (still deferred): JWT/passwords, role / ownership /
+environment policy and the `policies` table (Phase 8); rule risk (Phase 9);
+ML (Semester 2); approval / TOCTOU / APPROVAL_REQUIRED (Phase 11);
+`behavior_events` and `risk_assessments` writes (Phase 10 / Phase 9).
+
+The Phase 5 rule `BLOCK if environment == production` stays, relocated
+into a clearly labelled placeholder policy stage (`gateway/policy.py`) with
+its reason text UNCHANGED. Phase 8 replaces that stage; it does not extend it.
+
+## 32. Schema Change -- One Alembic Migration on `security_requests`
+First migration since Phase 3. The existing table could not audit exactly the
+requests Section 15 cares about (unknown user, unregistered tool, invalid
+args): four NOT NULL foreign keys, no place for a BLOCK reason, no execution
+outcome. Resolved (no new table; the 11-table count is unchanged):
+- `user_id`, `agent_id`, `service_id`, `tool_id` become NULLABLE (null = the
+  submitted value did not resolve to a row).
+- NEW `raw_request` JSON NOT NULL (server default `{}`): the payload exactly as
+  submitted, so unresolved requests still leave evidence.
+- NEW `reason` Text, nullable: the Gateway's reason (set for every BLOCK).
+- NEW `execution_status` NOT NULL default `not_executed`; Python enum
+  `ExecutionStatus` {not_executed, executed, failed} + CHECK constraint, per #4.
+  Section 22: a failed tool call is never recorded as executed.
+`decision` stays nullable (intended for later phases, e.g. pending approval);
+Phase 7 always writes it. `risk_assessments` is NOT touched: its NOT NULL risk
+levels cannot represent a hard-check BLOCK (Section 11: no risk scoring on
+Step 1 failures); it is Phase 9's table.
+
+## 33. Seeds and Test Fixtures
+- `agents` gets one seeded row, `agent_name="AG001"`, status "active", in
+  `seed.py` (idempotent; matched by `agent_name`). `agents.agent_name` has no
+  UNIQUE constraint, so lookups use `.first()`, not `.one_or_none()`.
+- Because the Gateway now resolves identity, every Phase 5/6 test that calls the
+  Gateway needs an existing user and the AG001 agent in the test DB. Fixtures
+  provide them; the tests' `user_id` values are updated accordingly.
+
+## 34. Gateway Validation Failures Are BLOCK Decisions, Not HTTP Errors
+Supersedes the part of #11 that kept unknown-tool as an HTTP 400 "not a
+security decision": Section 11 Step 1 lists unregistered/disabled tool and
+malformed request as BLOCK. Resolved taxonomy:
+- BLOCK (HTTP 200, `decision: BLOCK`, `reason`, audited): unknown/inactive
+  user; unknown agent / missing agent_id; tool not registered; tool disabled;
+  arguments missing `service_name`/`environment`; invalid environment;
+  arguments failing the tool schema; target service not found; placeholder
+  policy (production). First failing stage short-circuits; `reason` names it.
+  Stage order follows Section 8: identity -> tool registry -> arguments ->
+  service -> policy.
+- HTTP 422, no decision, no audit row: FastAPI cannot parse the body at all
+  (missing request_id / user_id / tool, request_id too long).
+- HTTP 409, no new row: duplicate `request_id` (#36).
+- ALLOW but execution fails (MCP error/unreachable): audit row gets
+  `execution_status=failed`; response is HTTP 502 with a `detail`, NOT a 200
+  ALLOW, so the Phase 6 agent relays the failure instead of narrating a result
+  that never happened.
+- Test impact (deliberate): `test_unknown_tool_returns_400_not_a_security_decision`
+  becomes an "unknown tool is BLOCKed and audited" test.
+- The MCP route still validates its own inputs (defense in depth); an MCPError
+  there remains an execution failure, never a security decision (#11, kept).
+
+## 35. Audit Write Order
+The pipeline is read-only. After it produces a verdict, the Gateway writes
+exactly ONE `security_requests` INSERT (request_id, resolved FKs or NULL,
+raw_request, arguments, decision, reason, execution_status=not_executed) and
+COMMITS it BEFORE any MCP call. Then, only on ALLOW, it calls MCP and UPDATEs
+`execution_status` to executed/failed and commits. A crash mid-execution
+therefore still leaves the audit evidence.
+Refinement of the approved sketch ("insert with NULL decision, then update"):
+because the pipeline reads but never writes, an early NULL-decision insert
+would add an UPDATE and a half-filled-row state with no information gain.
+The audit-before-execute guarantee is identical.
+
+## 36. request_id Rules
+- `max_length=32` validated at the HTTP boundary (matches `String(32)`, #2;
+  `uuid4().hex` is 32, #27). Longer -> 422.
+- `request_id` is the PK; a duplicate raises IntegrityError on insert and is
+  returned as HTTP 409; the original row is untouched (replay-safe). A 409 is
+  not a decision and is not audited as a new row.
+
+## 37. MCP HTTP Seam -- `POST /mcp/tools/execute` (Section 17, FR-15)
+Corrects #11, whose last sentence implied Phase 5 created this route: Phase 5
+created only the Gateway route. Resolved: Phase 7 creates it
+(`backend/app/api/mcp.py`), and the Gateway reaches MCP only over HTTP,
+mirroring the agent->Gateway seam (#26).
+- Auth: header `X-Internal-Token` compared (constant-time) to env
+  `MCP_INTERNAL_TOKEN`. If the env var is unset the route rejects everything
+  (fail closed). Missing/wrong token -> HTTP 403, tool not executed. This is
+  the testable "direct MCP access attempt -> Reject" row of Section 15.
+  A shared static token is internal service auth, not user auth (that is
+  Phase 8).
+- Body: `{request_id, tool, arguments}`; the route calls `execute_tool()`,
+  commits, returns `{result}`. It makes no security decision (#11).
+- Gateway side: `gateway/mcp_client.py` (`McpClient`, httpx-compatible, adds the
+  token, base URL from `MCP_BASE_URL`, default `http://127.0.0.1:8000`).
+  Injected via a FastAPI dependency so tests substitute a TestClient-backed one.
+- Consequence: Gateway route and MCP route must stay sync `def` (self-calls
+  inside one uvicorn process, same reasoning as #26).
+- Limitation, stated honestly: both routes live in one FastAPI process, so this
+  is a logical trust boundary (token-protected route), not a network one.
+
+## 38. Gateway Package Layout and Response Contract
+Flat, per #13/#28: `backend/app/gateway/{pipeline,identity,validation,policy,
+audit,mcp_client}.py`. `app/api/gateway.py` becomes thin: parse request ->
+`pipeline` -> response. Section 28's `gateway/[auth/, validation/, ...]`
+subfolders are not created; split a module only when it outgrows one file.
+Response contract unchanged (the Phase 6 agent depends on it): BLOCK ->
+`{request_id, decision, reason}`; ALLOW -> `{request_id, decision, result}`.
+No `risk_level` field until Phase 9.
