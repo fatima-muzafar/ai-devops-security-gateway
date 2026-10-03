@@ -1,8 +1,7 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Phase 7 -- Full Security Gateway and request IDs. Planning LOCKED
-(decisions #31-#38); implementation NOT started. Phase 6 is complete.
+Phase 7 -- Phase 7 -- Stage 1 (DB layer) COMPLETE; Stage 2 (MCP seam) next. Planning locked (decisions #31-#39); Stages 2-3 not started.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -11,18 +10,18 @@ Phase 7 -- Full Security Gateway and request IDs. Planning LOCKED
 - Phase 4 -- MCP Server and Five DevOps Tools
 - Phase 5 -- Skeleton End-to-End Path (Single Tool, ALLOW/BLOCK Only, No ML)
 - Phase 6 -- LangChain DevOps Agent + LLM Integration
+- Phase 7 Stage 1 -- DB layer (migration a8d41c7e5b92, ExecutionStatus, AG001 seed)
 
 ## Current Repo State
-- Last verified commit: `90aa16a`
+- Last verified commit: `b909ad2`
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
 - Phase 1 through Phase 6 are complete.
-- Database: 11 tables, unchanged since Phase 3. Phase 7 will add ONE migration
-  (columns on `security_requests`, no new table -- #32).
-- Full suite: 36/36 passing at the end of Phase 6 (user-verified).
-- `docs/decisions.md` has 38 entries (#31-#38 are Phase 7, locked ahead of code).
+- Database: "11 tables. Migration a8d41c7e5b92 applied (audit columns on security_requests, no  new table -- #32, #39)."
+- Full suite: "39/39 passing after Phase 7 Stage 1 (user-verified)."
+- `docs/decisions.md has 39 entries (#31-#39 are Phase 7).
 - Real `GOOGLE_API_KEY` in git-ignored `backend/.env` (Gemini free tier, #16).
 
 ## Phase 7 Goal / Decisions Locked
@@ -52,7 +51,7 @@ audit persistence, and an internal MCP HTTP seam. Summary (reasoning in
 ## Next Task (implement in 3 stages; run pytest and commit after each)
 1. DB layer: `ExecutionStatus` enum, `SecurityRequest` model changes, Alembic
    migration (revises the current head), seed AG001. Existing tests must
-   still pass.
+   still pass. (done)
 2. MCP seam: `app/api/mcp.py` route + token check, `gateway/mcp_client.py`,
    conftest wiring (env token + dependency override), tests incl. the
    "direct MCP access without token is rejected" case.

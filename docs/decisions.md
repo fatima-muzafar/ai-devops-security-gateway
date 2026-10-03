@@ -543,3 +543,10 @@ subfolders are not created; split a module only when it outgrows one file.
 Response contract unchanged (the Phase 6 agent depends on it): BLOCK ->
 `{request_id, decision, reason}`; ALLOW -> `{request_id, decision, result}`.
 No `risk_level` field until Phase 9.
+
+## 39. `security_requests.environment` Becomes Nullable
+Extends #32. #34 BLOCKs and audits requests whose `environment` is missing or not a valid
+Environment value. A NOT NULL enum column (with CHECK, #4) cannot store those rows.
+Resolved: `environment` becomes NULLABLE, same convention as the four FKs
+(null = the submitted value did not resolve to a valid Environment). The unparsed value is
+still preserved in `raw_request`. Same migration as #32; no new table.
