@@ -1,26 +1,24 @@
 """
-Phase 5: end-to-end test for POST /api/gateway/tool-request.
+Phase 5 tests, updated in Phase 7 Stage 3 (decisions.md #33, #34, #41).
 
-Verifies the full request -> placeholder decision -> execute_tool ->
-service_state_history pipeline, using STATUS.md's corrected verification
-method: assert a new service_state_history row exists, not a status
-diff. A freshly created test service is already "healthy" (Section 13
-seed state), so a restart leaves `status` unchanged either way -- a
-status diff would prove nothing.
+Changes from Phase 5, all deliberate:
+- every request now carries agent_id "AG001" (the Gateway requires it);
+- the production test uses `test_service_production`, because the service stage
+  now runs BEFORE the placeholder policy stage;
+- the old "unknown tool -> HTTP 400" test is replaced: an unknown tool is a
+  BLOCK decision (HTTP 200) and is audited.
 
-Uses the real `db` / `test_service` fixtures from tests/conftest.py.
-The endpoint resolves its own DB session via app.database.base.get_db
-(a separate SQLAlchemy session/connection from the test's `db` fixture),
-so assertions re-query through `db` after each request to read back
-whatever the endpoint committed.
+The endpoint uses its own DB session, so assertions re-query after expiring the
+test session's identity map.
 """
 from fastapi.testclient import TestClient
 
-from app.database.enums import ChangeType
-from app.database.models import ServiceStateHistory
+from app.database.enums import ChangeType, Decision, ExecutionStatus
+from app.database.models import SecurityRequest, ServiceStateHistory
 from app.main import app
 
 client = TestClient(app)
+PATH = "/api/gateway/tool-request"
 
 
 def _history_count(db, service_id, change_type=None):
@@ -30,84 +28,71 @@ def _history_count(db, service_id, change_type=None):
     return query.count()
 
 
+def _audit_row(db, request_id):
+    db.expire_all()
+    return db.get(SecurityRequest, request_id)
+
+
+def _payload(request_id, service_name, environment, tool="restart_service"):
+    return {
+        "request_id": request_id,
+        "user_id": "qa_test_owner",
+        "agent_id": "AG001",
+        "tool": tool,
+        "arguments": {"service_name": service_name, "environment": environment},
+    }
+
+
 def test_restart_service_staging_allows_and_records_history(db, test_service):
-    """environment=staging -> placeholder rule ALLOWs -> execute_tool runs
-    restart_service -> a new service_state_history row is created
-    (Scenario B / Demo 2's ALLOW path, exercised over HTTP for the first
-    time in Phase 5)."""
+    """staging -> ALLOW -> MCP runs restart_service -> one new
+    service_state_history row (Scenario B / Demo 2)."""
     before = _history_count(db, test_service.id, ChangeType.RESTART)
 
     response = client.post(
-        "/api/gateway/tool-request",
-        json={
-            "request_id": "REQ-TEST-001",
-            "user_id": "qa_test_owner",
-            "tool": "restart_service",
-            "arguments": {
-                "service_name": test_service.service_name,
-                "environment": "staging",
-            },
-        },
+        PATH, json=_payload("REQ-TEST-001", test_service.service_name, "staging")
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["decision"] == "ALLOW"
     assert body["result"]["result"]["change_type"] == "restart"
-
-    after = _history_count(db, test_service.id, ChangeType.RESTART)
-    assert after == before + 1
+    assert _history_count(db, test_service.id, ChangeType.RESTART) == before + 1
 
 
-def test_restart_service_production_blocks_before_mcp(db, test_service):
-    """environment=production -> placeholder rule BLOCKs -> execute_tool is
-    never called -> no service_state_history row is created (Section 5/11:
-    BLOCK means no MCP call, no state change).
-
-    test_service only exists in staging; that's fine here -- the
-    placeholder rule decides purely from the request's own `environment`
-    field before touching the database, so a matching production Service
-    row is not needed to prove the BLOCK path never reaches MCP.
-    """
-    before = _history_count(db, test_service.id)
+def test_restart_service_production_blocks_before_mcp(db, test_service, test_service_production):
+    """production (service exists) -> placeholder policy BLOCK -> MCP never
+    called -> no history row (Section 5/11)."""
+    before = _history_count(db, test_service_production.id)
 
     response = client.post(
-        "/api/gateway/tool-request",
-        json={
-            "request_id": "REQ-TEST-002",
-            "user_id": "qa_test_owner",
-            "tool": "restart_service",
-            "arguments": {
-                "service_name": test_service.service_name,
-                "environment": "production",
-            },
-        },
+        PATH, json=_payload("REQ-TEST-002", test_service.service_name, "production")
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["decision"] == "BLOCK"
+    assert body["reason"].startswith("Phase 5 placeholder rule")
     assert "result" not in body
-
-    after = _history_count(db, test_service.id)
-    assert after == before
+    assert _history_count(db, test_service_production.id) == before
 
 
-def test_unknown_tool_returns_400_not_a_security_decision(db, test_service):
-    """A dispatch failure (unregistered tool) is a 400, not ALLOW/BLOCK --
-    decisions.md #11: MCP dispatch errors are a separate error taxonomy
-    from the Gateway's ALLOW/BLOCK/APPROVAL_REQUIRED decisions."""
+def test_unknown_tool_is_blocked_and_audited(db, test_service):
+    """Replaces the Phase 5 'unknown tool -> HTTP 400' test (decisions.md #34):
+    an unregistered tool is a Section 11 Step 1 BLOCK, HTTP 200, with an audit row."""
     response = client.post(
-        "/api/gateway/tool-request",
-        json={
-            "request_id": "REQ-TEST-003",
-            "user_id": "qa_test_owner",
-            "tool": "delete_everything",
-            "arguments": {
-                "service_name": test_service.service_name,
-                "environment": "staging",
-            },
-        },
+        PATH,
+        json=_payload("REQ-TEST-003", test_service.service_name, "staging", tool="delete_everything"),
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "BLOCK"
+    assert "Tool registry stage" in body["reason"]
+
+    row = _audit_row(db, "REQ-TEST-003")
+    assert row is not None
+    assert row.decision == Decision.BLOCK
+    assert row.tool_id is None
+    assert row.user_id is not None
+    assert row.reason == body["reason"]
+    assert row.execution_status == ExecutionStatus.NOT_EXECUTED

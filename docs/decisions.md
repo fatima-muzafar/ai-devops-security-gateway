@@ -578,3 +578,35 @@ still preserved in `raw_request`. Same migration as #32; no new table.
 - Stage 2 does not change the Gateway route: it still calls `execute_tool()`
   in-process. Until Stage 3 the new route is live and token-protected but unused,
   so FR-15 is not yet enforced on the Gateway path.
+
+  ## 41. Phase 7 Stage 3 -- Gateway Pipeline Details Left Open by #34-#38
+- Layout: `gateway/pipeline.py` holds `GatewayRequest`, `Verdict`, `evaluate()` (read-only)
+  and `handle_tool_request()` (evaluate -> audit -> MCP -> response dict). `api/gateway.py`
+  only parses, calls it, and maps `DuplicateRequestError` -> 409, `ExecutionFailedError` -> 502.
+  `raw_request` is the validated body re-serialised (`agent_id` null and `arguments` {} if omitted).
+- Identity: user is checked first, then agent; the stage short-circuits. FKs record only what
+  resolved before the first failing stage (unknown user -> user_id AND agent_id NULL). `users`
+  has no status column, so only "unknown user" exists. An agent whose status != "active" is a
+  BLOCK. Agent lookup is `ORDER BY id ... first()` because `agent_name` is not UNIQUE (#33).
+- Arguments: `environment` is recorded on the audit row as soon as it parses to a valid
+  Environment, even if a later check fails. `service_name` is checked first for the reason text.
+- Reserved argument keys (`db`, `tool_name`) are a Gateway BLOCK. The MCP route rejects them
+  with 422 (#40), so without this an ALLOWED request would fail predictably at execution.
+  The constant is duplicated in `gateway/validation.py` on purpose: the Gateway does not
+  import `app.api.mcp`.
+- Reasons name their stage. Values from the request are echoed via truncated `repr()` (70
+  chars) so control characters cannot reach a Text column. The placeholder policy reason is the
+  unchanged Phase 5 text and carries no "stage" prefix.
+- Order is fixed (#34): the service stage precedes the policy stage. Observable change from
+  Phase 5: production for a service that has no production row is a Service-stage BLOCK.
+- Duplicate request_id: IntegrityError -> rollback -> if a row with that id exists, 409;
+  otherwise the error is re-raised (never misreported as a duplicate). The pipeline may run
+  before the insert fails, but MCP is never reached on a duplicate.
+- ALLOW rows keep `reason` NULL (#32 requires a reason only for BLOCK).
+- MCP failure: any non-200 response or `McpUnavailableError` -> `execution_status=failed`
+  + HTTP 502. Known limitation: a timeout after MCP already ran is also recorded as failed
+  (outcome unknown). Any other unexpected exception propagates (500) and leaves the row
+  `not_executed`.
+- Tests: `tests/conftest.py` gets an autouse MCP seam (random token + `get_mcp_client`
+  override), a get-or-create `ag001_agent`, and `test_service_production`. `test_service`
+  teardown deletes audit rows referencing its user/services before deleting them.

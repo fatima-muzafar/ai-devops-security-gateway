@@ -1,21 +1,39 @@
 """
-Shared pytest fixtures for Phase 3 tests.
+Shared pytest fixtures.
 
-Design choice: mutation tests (test_deploy.py, test_restart_rollback.py)
-create their OWN throwaway user + service per test and delete both in
-teardown. They never depend on `seed.py` having been run, and they never
-touch the real 6 seeded services — so running these tests can never
-corrupt or duplicate real project data.
+Mutation tests create their OWN throwaway user + service(s) and delete them in
+teardown; they never depend on seed.py and never touch the 6 seeded services.
+test_seed.py is the one exception (it tests the real seed).
 
-test_seed.py is the one exception: it deliberately runs against the real
-seed script and real seed data, because testing that idempotency is the
-whole point of that file.
+Phase 7 Stage 3 additions (decisions.md #33, #41):
+- autouse MCP seam: random token in MCP_INTERNAL_TOKEN + get_mcp_client
+  override backed by an in-process TestClient;
+- `ag001_agent`: get-or-create the AG001 agent (only deleted if created here);
+- `test_service_production`: a production row for the same service name;
+- teardown deletes audit rows (security_requests) that reference the fixture
+  user/services before deleting them (FK order).
 """
+import secrets
+
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import or_
 
 from app.database.base import SessionLocal
 from app.database.enums import Environment, Role
-from app.database.models import Service, ServiceStateHistory, User
+from app.database.models import Agent, SecurityRequest, Service, ServiceStateHistory, User
+from app.gateway.mcp_client import McpClient, get_mcp_client
+from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _wire_mcp_seam(monkeypatch):
+    token = secrets.token_hex(16)
+    monkeypatch.setenv("MCP_INTERNAL_TOKEN", token)
+    mcp_http = TestClient(app)
+    app.dependency_overrides[get_mcp_client] = lambda: McpClient(mcp_http, token=token)
+    yield token
+    app.dependency_overrides.pop(get_mcp_client, None)
 
 
 @pytest.fixture
@@ -29,11 +47,29 @@ def db():
 
 
 @pytest.fixture
-def test_service(db):
-    """A throwaway service + owner, deleted after the test. The username
-    and service_name are prefixed qa_ / qa- specifically because
-    SEED_USERS / SEED_SERVICES never use that prefix — guarantees no
-    collision with real seed data even if seed.py has already run."""
+def ag001_agent(db):
+    agent = db.query(Agent).filter_by(agent_name="AG001").order_by(Agent.id).first()
+    created = agent is None
+    if created:
+        agent = Agent(agent_name="AG001", status="active")
+        db.add(agent)
+        db.commit()
+    agent_id = agent.id
+
+    yield agent
+
+    if created:
+        db.rollback()
+        db.query(SecurityRequest).filter_by(agent_id=agent_id).delete()
+        db.query(Agent).filter_by(id=agent_id).delete()
+        db.commit()
+
+
+@pytest.fixture
+def test_service(db, ag001_agent):
+    """A throwaway staging service + owner (user `qa_test_owner`, which is
+    therefore a real user for Gateway identity lookup), deleted after the test.
+    The qa_ / qa- prefixes never collide with SEED_USERS / SEED_SERVICES."""
     owner = User(
         username="qa_test_owner",
         hashed_password="test-placeholder",
@@ -52,12 +88,43 @@ def test_service(db):
     )
     db.add(service)
     db.commit()
+    owner_id, service_id = owner.id, service.id
 
     yield service
 
-    # Teardown order matters: history rows reference service_id (FK),
-    # service references owner_id (FK) — delete children before parents.
-    db.query(ServiceStateHistory).filter_by(service_id=service.id).delete()
-    db.delete(service)
-    db.delete(owner)
+    # FK order: audit rows and history rows -> service -> owner.
+    db.rollback()
+    db.query(SecurityRequest).filter(
+        or_(SecurityRequest.user_id == owner_id, SecurityRequest.service_id == service_id)
+    ).delete(synchronize_session=False)
+    db.query(ServiceStateHistory).filter_by(service_id=service_id).delete()
+    db.query(Service).filter_by(id=service_id).delete()
+    db.query(User).filter_by(id=owner_id).delete()
+    db.commit()
+
+
+@pytest.fixture
+def test_service_production(db, test_service):
+    """Production row for the same service name, so a production request gets
+    PAST the service stage and reaches the placeholder policy stage."""
+    prod = Service(
+        service_name=test_service.service_name,
+        environment=Environment.PRODUCTION,
+        current_version=1,
+        known_good_version=1,
+        owner_id=test_service.owner_id,
+        status="healthy",
+    )
+    db.add(prod)
+    db.commit()
+    prod_id = prod.id
+
+    yield prod
+
+    db.rollback()
+    db.query(SecurityRequest).filter(SecurityRequest.service_id == prod_id).delete(
+        synchronize_session=False
+    )
+    db.query(ServiceStateHistory).filter_by(service_id=prod_id).delete()
+    db.query(Service).filter_by(id=prod_id).delete()
     db.commit()
