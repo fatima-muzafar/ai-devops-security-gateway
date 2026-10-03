@@ -550,3 +550,31 @@ Environment value. A NOT NULL enum column (with CHECK, #4) cannot store those ro
 Resolved: `environment` becomes NULLABLE, same convention as the four FKs
 (null = the submitted value did not resolve to a valid Environment). The unparsed value is
 still preserved in `raw_request`. Same migration as #32; no new table.
+
+## 40. Phase 7 Stage 2 -- MCP Route and McpClient Details Left Open by #37
+- Token: `MCP_INTERNAL_TOKEN` is read from the environment at REQUEST time, never
+  cached. Missing header, wrong token, unset env var and EMPTY env var all return
+  the same HTTP 403 body `{"detail": "Forbidden."}` (fail closed, no info leak). An
+  empty token is explicitly rejected: `compare_digest("", "")` would otherwise be
+  True. Comparison is `hmac.compare_digest` on UTF-8 bytes, so a non-ASCII header
+  cannot raise a TypeError.
+- Ordering: the token check is a route dependency, so it runs before body-schema
+  errors. Only an unparseable JSON body can still produce a 422 before the 403.
+  Accepted: it leaks nothing but "this route exists".
+- Arguments mirror the Gateway route: `service_name` and `environment` are popped
+  from `arguments`; missing or invalid -> 422. Extra keys named `db` or
+  `tool_name` -> 422, because they would collide with `execute_tool()`'s own
+  parameters and raise a TypeError (HTTP 500).
+- Status mapping: pydantic ValidationError -> 422; MCPError -> 400; anything else
+  -> 500 with nothing committed. Success -> `{"result": <execute_tool dict>}`; that
+  dict already has its own "result" key, so callers see `body["result"]["result"]`,
+  the same nesting the Gateway route returns today.
+- `McpClient.execute()` returns `McpResponse(status_code, body)`, mirroring
+  `GatewayClient`. It raises `McpUnavailableError` for transport errors and when
+  no token is configured (nothing is sent). Stage 3 maps BOTH a non-200 response
+  and `McpUnavailableError` to `execution_status=failed` + HTTP 502 (#34).
+- An empty `MCP_BASE_URL` counts as unset (`or` default), because `.env.example`
+  ships it empty.
+- Stage 2 does not change the Gateway route: it still calls `execute_tool()`
+  in-process. Until Stage 3 the new route is live and token-protected but unused,
+  so FR-15 is not yet enforced on the Gateway path.
