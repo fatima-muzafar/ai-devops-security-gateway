@@ -50,3 +50,12 @@ class ChangeType(str, enum.Enum):
     DEPLOY = "deploy"
     RESTART = "restart"
     ROLLBACK = "rollback"
+
+
+
+class ExecutionStatus(str, enum.Enum):
+    """decisions.md #32: outcome of the MCP call for an audited request.
+    A failed tool call is never recorded as executed (Section 22)."""
+    NOT_EXECUTED = "not_executed"
+    EXECUTED = "executed"
+    FAILED = "failed"
