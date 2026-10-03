@@ -1,7 +1,7 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Phase 7 -- Phase 7 -- Stage 1 (DB layer) COMPLETE; Stage 2 (MCP seam) next. Planning locked (decisions #31-#39); Stages 2-3 not started.
+Phase 7 -- Phase 7 -- Stage 2 (MCP seam) COMPLETE; Stage 3 (Gateway pipeline) next. Decisions #31-#40 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -11,17 +11,18 @@ Phase 7 -- Phase 7 -- Stage 1 (DB layer) COMPLETE; Stage 2 (MCP seam) next. Plan
 - Phase 5 -- Skeleton End-to-End Path (Single Tool, ALLOW/BLOCK Only, No ML)
 - Phase 6 -- LangChain DevOps Agent + LLM Integration
 - Phase 7 Stage 1 -- DB layer (migration a8d41c7e5b92, ExecutionStatus, AG001 seed)
+- Phase 7 Stage 2 -- MCP seam (/mcp/tools/execute, McpClient, token auth)
 
 ## Current Repo State
-- Last verified commit: `b909ad2`
+- Last verified commit: `8a88180`
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
 - Phase 1 through Phase 6 are complete.
 - Database: "11 tables. Migration a8d41c7e5b92 applied (audit columns on security_requests, no  new table -- #32, #39)."
-- Full suite: "39/39 passing after Phase 7 Stage 1 (user-verified)."
-- `docs/decisions.md has 39 entries (#31-#39 are Phase 7).
+- Full suite: "55/55 passing after Phase 7 Stage 2 (user-verified)."
+- `docs/decisions.md has 40 entries (#31-#40 are Phase 7).
 - Real `GOOGLE_API_KEY` in git-ignored `backend/.env` (Gemini free tier, #16).
 
 ## Phase 7 Goal / Decisions Locked
@@ -47,6 +48,7 @@ audit persistence, and an internal MCP HTTP seam. Summary (reasoning in
   `MCP_INTERNAL_TOKEN` (fail closed), Gateway -> MCP over HTTP via `McpClient`.
   Corrects #11 (Phase 5 did not create this route).
 - #38 Flat `backend/app/gateway/` modules; response contract unchanged.
+- #40 get_mcp_client() exists, and that the Gateway must map both non-200 and McpUnavailableError to execution_status=failed plus HTTP 502.
 
 ## Next Task (implement in 3 stages; run pytest and commit after each)
 1. DB layer: `ExecutionStatus` enum, `SecurityRequest` model changes, Alembic
@@ -54,7 +56,7 @@ audit persistence, and an internal MCP HTTP seam. Summary (reasoning in
    still pass. (done)
 2. MCP seam: `app/api/mcp.py` route + token check, `gateway/mcp_client.py`,
    conftest wiring (env token + dependency override), tests incl. the
-   "direct MCP access without token is rejected" case.
+   "direct MCP access without token is rejected" case.(done)
 3. Gateway pipeline: `app/gateway/*`, thin `app/api/gateway.py`, audit rows,
    fixture/test updates (users + AG001, unknown-tool BLOCK, duplicate id 409,
    BLOCK audited with NULL FKs, ALLOW audited as executed).
