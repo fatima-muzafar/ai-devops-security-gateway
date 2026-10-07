@@ -2,7 +2,9 @@
 The agent's only way to act on infrastructure: submit a structured request
 to POST /api/gateway/tool-request (Section 7, decisions.md #26).
 
-This module must never import app.mcp or app.api.gateway.
+The caller's bearer token is forwarded in the Authorization header (#44, #51);
+the Gateway verifies it itself. This module must never import app.mcp or
+app.api.gateway.
 """
 import os
 from dataclasses import dataclass
@@ -27,8 +29,9 @@ class GatewayClient:
         self._http = http_client
         self._path = path
 
-    def submit(self, tool_request: dict[str, Any]) -> GatewayResponse:
-        response = self._http.post(self._path, json=tool_request)
+    def submit(self, tool_request: dict[str, Any], token: str | None = None) -> GatewayResponse:
+        headers = {"Authorization": f"Bearer {token}"} if token else None
+        response = self._http.post(self._path, json=tool_request, headers=headers)
         try:
             body = response.json()
         except ValueError:

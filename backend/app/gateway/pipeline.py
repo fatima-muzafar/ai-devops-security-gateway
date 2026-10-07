@@ -1,16 +1,17 @@
 """
-Gateway pipeline orchestrator (Section 8; decisions.md #31, #34, #35, #38, #41).
+Gateway pipeline orchestrator (Section 8; decisions.md #31, #34, #35, #38, #41, #51).
 
 evaluate() is READ-ONLY and short-circuits on the first failing stage:
-identity -> tool registry -> arguments -> service -> placeholder policy.
+authentication + agent identification -> tool registry -> arguments -> service ->
+placeholder policy (Stage 3 adds ownership and the real policy).
 handle_tool_request() then writes the single audit row (committed BEFORE any
 MCP call) and, on ALLOW only, calls MCP over HTTP and records the outcome.
 
-Not here (still deferred): JWT, real policy, rule risk, ML, approval/TOCTOU,
+Not here (still deferred): ownership/role policy, rule risk, ML, approval/TOCTOU,
 behavior_events / risk_assessments writes.
 """
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -32,11 +33,12 @@ class ExecutionFailedError(Exception):
 @dataclass(frozen=True)
 class GatewayRequest:
     request_id: str
-    user_id: str
+    user_id: str  # a CLAIM; must equal the token subject (#44)
     agent_id: str | None
     tool: str
     arguments: dict[str, Any]
     raw_request: dict[str, Any]
+    token: str | None = field(default=None, repr=False)  # never stored or logged (#51)
 
 
 @dataclass
@@ -51,7 +53,7 @@ class Verdict:
 
 
 def evaluate(db: Session, req: GatewayRequest) -> Verdict:
-    ident = resolve_identity(db, req.user_id, req.agent_id)
+    ident = resolve_identity(db, req.token, req.user_id, req.agent_id)
     resolved: dict[str, Any] = {"user_id": ident.user_id, "agent_id": ident.agent_id}
     if ident.block_reason:
         return Verdict(Decision.BLOCK, ident.block_reason, **resolved)

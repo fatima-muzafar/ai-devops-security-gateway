@@ -12,6 +12,12 @@ Phase 7 Stage 3 additions (decisions.md #33, #41):
 - `test_service_production`: a production row for the same service name;
 - teardown deletes audit rows (security_requests) that reference the fixture
   user/services before deleting them (FK order).
+
+Phase 8 Stage 2 additions (decisions.md #49, #51):
+- autouse JWT_SECRET seam (random per test);
+- `auth_headers(username)`: bearer header minted directly (not via login);
+- `make_user(username, role)`: throwaway user with a random argon2 password,
+  removed (with its audit rows) in teardown.
 """
 import secrets
 
@@ -22,6 +28,7 @@ from sqlalchemy import or_
 from app.database.base import SessionLocal
 from app.database.enums import Environment, Role
 from app.database.models import Agent, SecurityRequest, Service, ServiceStateHistory, User
+from app.gateway.auth import hash_password, issue_token
 from app.gateway.mcp_client import McpClient, get_mcp_client
 from app.main import app
 
@@ -36,6 +43,22 @@ def _wire_mcp_seam(monkeypatch):
     app.dependency_overrides.pop(get_mcp_client, None)
 
 
+@pytest.fixture(autouse=True)
+def _wire_jwt_secret(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", secrets.token_hex(32))
+
+
+@pytest.fixture
+def auth_headers():
+    """auth_headers("alice") -> {"Authorization": "Bearer <jwt for alice>"}."""
+
+    def make(username: str) -> dict[str, str]:
+        token, _ = issue_token(username)
+        return {"Authorization": f"Bearer {token}"}
+
+    return make
+
+
 @pytest.fixture
 def db():
     session = SessionLocal()
@@ -44,6 +67,33 @@ def db():
     finally:
         session.rollback()  # catch anything a test forgot to commit/clean up
         session.close()
+
+
+@pytest.fixture
+def make_user(db):
+    created: list[str] = []
+
+    def make(username: str, role: Role = Role.JUNIOR_DEVELOPER) -> User:
+        user = User(
+            username=username,
+            hashed_password=hash_password(secrets.token_urlsafe(16)),
+            role=role,
+        )
+        db.add(user)
+        db.commit()
+        created.append(username)
+        return user
+
+    yield make
+
+    db.rollback()
+    ids = [u.id for u in db.query(User).filter(User.username.in_(created)).all()]
+    if ids:
+        db.query(SecurityRequest).filter(SecurityRequest.user_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
 
 
 @pytest.fixture
@@ -68,7 +118,7 @@ def ag001_agent(db):
 @pytest.fixture
 def test_service(db, ag001_agent):
     """A throwaway staging service + owner (user `qa_test_owner`, which is
-    therefore a real user for Gateway identity lookup), deleted after the test.
+    therefore a real user for Gateway authentication), deleted after the test.
     The qa_ / qa- prefixes never collide with SEED_USERS / SEED_SERVICES."""
     owner = User(
         username="qa_test_owner",

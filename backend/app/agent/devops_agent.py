@@ -1,8 +1,10 @@
 """
-Autonomous DevOps agent (Section 6/7; decisions.md #19-#23, #26-#30).
+Autonomous DevOps agent (Section 6/7; decisions.md #19-#23, #26-#30, #44).
 
 The agent PROPOSES a structured tool request and submits it to the Gateway
 through GatewayClient. It never imports MCP and never decides anything.
+The caller's bearer token is only forwarded to the Gateway; it never enters
+prompts, history or replies.
 """
 import json
 import logging
@@ -65,10 +67,13 @@ class DevOpsAgent:
     def __init__(self, llm: Any, gateway: GatewayClient):
         self._llm = llm.bind_tools(build_tool_specs())
         self._gateway = gateway
+        # Keyed by the AUTHENTICATED username (#44, #29).
         self._history: dict[str, list[BaseMessage]] = {}
 
     # ------------------------------------------------------------------
-    def handle_message(self, *, user_id: str, request_id: str, message: str) -> AgentReply:
+    def handle_message(
+        self, *, user_id: str, token: str, request_id: str, message: str
+    ) -> AgentReply:
         history = self._history.get(user_id, [])
         messages: list[BaseMessage] = [
             SystemMessage(content=SYSTEM_PROMPT),
@@ -91,7 +96,7 @@ class DevOpsAgent:
             "tool": call["name"],
             "arguments": call["args"],
         }
-        gw = self._gateway.submit(tool_request)
+        gw = self._gateway.submit(tool_request, token=token)
 
         decision = gw.body.get("decision") if gw.status_code == 200 else None
         if decision == "ALLOW":

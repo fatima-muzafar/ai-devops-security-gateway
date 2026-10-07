@@ -1,9 +1,10 @@
 """
 POST /api/chat -- developer <-> DevOps agent (Section 17, decisions.md #18).
 
+- Requires `Authorization: Bearer <jwt>` (#44, #51). The caller's identity comes
+  from the token, never from the body; a `user_id` in the body is ignored.
 - request_id is generated HERE, not by the agent (#20), as uuid4().hex so it
   fits security_requests.request_id String(32) (#2, #27).
-- user_id is an unvalidated placeholder (#19); Phase 8 replaces it.
 - MUST stay a sync `def` (#26): the agent makes a blocking HTTP call back
   into this same app, which would deadlock inside an `async def` handler.
 """
@@ -18,13 +19,13 @@ from pydantic import BaseModel, Field
 from app.agent.devops_agent import AgentLLMError, DevOpsAgent
 from app.agent.gateway_client import GatewayClient, build_default_http_client
 from app.agent.llm import build_gemini_llm
+from app.api.deps import Caller, require_caller
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 class ChatIn(BaseModel):
-    user_id: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)
 
 
@@ -46,11 +47,16 @@ def get_agent() -> DevOpsAgent:
 
 
 @router.post("/api/chat", response_model=ChatOut)
-def chat(payload: ChatIn, agent: DevOpsAgent = Depends(get_agent)):
+def chat(
+    payload: ChatIn,
+    caller: Caller = Depends(require_caller),
+    agent: DevOpsAgent = Depends(get_agent),
+):
     request_id = uuid.uuid4().hex
     try:
         result = agent.handle_message(
-            user_id=payload.user_id,
+            user_id=caller.username,
+            token=caller.token,
             request_id=request_id,
             message=payload.message,
         )
