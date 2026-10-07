@@ -742,3 +742,17 @@ read Phase 8-10 results for those cases as final.
   approval-bound BLOCK; the audit row for an auth failure; two agent tests for Gateway
   HTTP 502 and 409 (the open STATUS.md item).
 - Tests share the dev DB (#41), so seeds used by tests must stay convergent.
+
+## 50. Policies Table Storage Shape (resolves the PENDING note in #46)
+The `policies` model already has `tool_id` (FK), `role`, `environment`, `action`
+String(32) NOT NULL, `allowed` Boolean NOT NULL and `requires_approval` Boolean NOT
+NULL. NO migration is needed for Phase 8.
+- Only rows with allowed=True are stored. The Policy-stage lookup MUST require
+  allowed=True; no matching row = deny. Seed reconciliation deletes any row outside
+  the #46 matrix, including allowed=False rows.
+- `action` is set to the tool name (same value as `tools.tool_name`): `tool_id`
+  already identifies the tool and no separate action vocabulary exists.
+- `seed_policies` resolves `tool_id` by tool_name and requires the tool registry to be
+  seeded first. A missing tool raises a clear error; it never creates tool rows.
+- Stage 1 puts this in `seed.py` (`SEED_POLICIES`, `seed_policies`), run by
+  `python -m app.database.seed`.
