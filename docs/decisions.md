@@ -610,3 +610,135 @@ still preserved in `raw_request`. Same migration as #32; no new table.
 - Tests: `tests/conftest.py` gets an autouse MCP seam (random token + `get_mcp_client`
   override), a get-or-create `ag001_agent`, and `test_service_production`. `test_service`
   teardown deletes audit rows referencing its user/services before deleting them.
+
+  <!-- APPEND to docs/decisions.md, after #41. Written BEFORE code (standing rule). -->
+
+## Phase 8 Decisions -- Authentication, Identity, Policy, Ownership, Environment
+
+## 42. Login Endpoint and JWT Scheme
+Section 17 lists no login route; FR-01/Section 22/Section 19 require real authentication.
+Resolved: add `POST /api/auth/login` (`{username, password}` -> `{access_token,
+token_type, expires_in}`) in `backend/app/api/auth.py`. No registration, refresh,
+logout, reset or lockout. Recorded here only; the planning doc is not edited (#14 precedent).
+- Library: PyJWT, HS256, `algorithms=["HS256"]` pinned on decode (rejects `alg=none`).
+  Requires `exp` and `sub`. python-jose is in requirements.txt but unused; not removed.
+- Secret: `JWT_SECRET` (the existing `.env.example` key). Read at REQUEST time, never
+  cached (as #40). Unset, empty, shorter than 32 chars, or equal to "changeme" -> fail
+  closed: login returns HTTP 503 `{"detail": "Authentication is not configured."}`;
+  the Gateway BLOCKs with "Authentication stage: authentication is not configured.";
+  chat returns 503. Generate the secret locally; never commit it.
+- Claims: `sub` = username, `iat`, `exp`. NO role claim: the Gateway reads
+  `users.role` from the DB on every request. Expiry 60 minutes, no refresh.
+- Login failure: one generic 401 body for unknown user and wrong password; unknown
+  users verify against a dummy hash to even out timing. Login attempts are not
+  audited in `security_requests` (keyed by tool-request `request_id`).
+- Limitations (state in report): no brute-force protection; no token revocation
+  (`users` has no status column, #41), bounded only by expiry.
+- Rejected: RS256 (key management, single process), refresh tokens (scope).
+
+## 43. Password Hashing and Seed Passwords
+- Library: `argon2-cffi`, default parameters. Fallback `bcrypt` only if the Windows
+  install fails. passlib rejected (unmaintained).
+- `users.hashed_password` is String(255): argon2 fits, NO migration.
+- `seed.py` reads `SEED_USER_PASSWORD` from the environment. No password appears in
+  code, tests or `.env.example` (key name only, empty value). If unset: users are
+  created with an unusable non-argon2 hash (login impossible) and a warning is printed.
+- Existing users whose hash does not start with `$argon2` (the Phase 3 placeholder)
+  are upgraded when the variable is set; valid argon2 hashes are NEVER overwritten.
+  Deliberate asymmetry with seed.py's skip-only pattern, same as `seed_tools` (#11).
+- One shared dev password for all seeded users: acceptable for a sandbox, stated as a
+  limitation. Tests hash random per-test passwords with the real hasher.
+
+## 44. Identity Propagation (supersedes the trust posture of #19 and #29)
+- `/api/chat` requires `Authorization: Bearer <jwt>`; `user_id` is removed from its
+  body (extra body fields are ignored, never read). Missing/invalid -> HTTP 401.
+- The agent forwards the same token to the Gateway via `GatewayClient`. The token is
+  never put in prompts, conversation history or `raw_request`.
+- The Gateway verifies the token itself and trusts nothing from chat. The Gateway body
+  keeps `user_id` (Section 17 shape) as a CLAIM that must equal the token `sub`; a
+  mismatch is a BLOCK at the Authentication stage. The acting identity is always the
+  token subject, and the role is always read from the DB.
+- Audit FKs: auth failures (missing/invalid/expired token, unknown subject, not
+  configured) record user_id and agent_id NULL. On a VALID token with a mismatched
+  `user_id` claim, `user_id` records the AUTHENTICATED user's id, agent_id stays NULL
+  (agent stage not reached), and the claimed value stays in `raw_request`.
+- Conversation history is keyed by the authenticated username (fixes #29's
+  cross-user write hole); still process-local, last 20 messages.
+- `agent_id` stays the hardcoded "AG001" (#19): identified, not authenticated
+  (Section 8: "authenticate the developer and identify the agent"). No agent credential.
+- Limitations (state in report): the agent holds the user's token, so a compromised
+  agent acts as that user, bounded by that user's permissions; anyone with a valid
+  token can call the Gateway directly claiming AG001 and gains no permissions by it;
+  UNAUTHENTICATED callers can write BLOCK audit rows and occupy request_ids (no rate
+  limiting, no cleanup).
+
+## 45. Pipeline Order, Authentication Failures and Reason Wording
+Order (Section 8, as #34): Authentication -> Agent identification -> Tool registry ->
+Arguments -> Service -> Ownership -> Policy. "Environment permission" is the
+environment column of the policy row (Section 11 Step 1), not a separate stage.
+- Authentication failure at the Gateway is a BLOCK decision (HTTP 200, audited), per
+  Section 11 Step 1; a 401 would hide it from E1/E4 decision counts. 401 is used only
+  by `/api/chat` and `/api/auth/login`, where no Gateway decision exists.
+- Reasons (values via truncated `repr()`, #41): "Authentication stage: missing bearer
+  token." / "...invalid token." / "...token expired." / "...token subject is not a
+  known user." / "...request user_id does not match the authenticated user." /
+  "...authentication is not configured."
+- Agent-stage reasons keep their existing "Identity stage:" text, minus "unknown user".
+- "Ownership stage: user 'x' is not assigned to 'svc' in 'env'." (owner not named.)
+- "Policy stage: role 'r' is not permitted to use 'tool' in 'env'."
+- Tool/Arguments/Service reasons unchanged. The Phase 5 placeholder reason is retired.
+- Consequence for Demo 3: no junior owns a production row, so "junior deploys to
+  production" blocks at Ownership. Use junior_developer_1 + deploy_service +
+  notification-service STAGING to show a Policy-stage block.
+- Rejected: Policy before Ownership (deviates from Section 8 for a cosmetic gain).
+
+## 46. Policy Matrix and Storage
+Default-deny: only permit rows are stored; no matching row = deny. S=staging,
+P=production.
+- junior_developer: get_logs S,P; get_metrics S,P; restart S. (5 rows)
+- senior_developer: get_logs S,P; get_metrics S,P; restart S,P; rollback S,P;
+  deploy S; deploy P with approval flag. (10 rows)
+- admin: all five tools S,P; deploy P with approval flag. (10 rows)
+Total 25. Junior reads are permitted in both environments (Section 9 states no
+environment limit; ownership gates them). ONLY production deploy carries the
+approval flag (Section 11 Step 2 example). Flagging every production mutation would
+make rule/ML risk irrelevant for production and gut E2 and Production Protection Rate.
+- Seed reconciles: `seed_policies` makes the table equal this matrix (inserts missing,
+  updates the flag, DELETES rows outside it) so a stale permit cannot survive a matrix
+  change. Safe to run in tests because it converges to the same set.
+- Storage shape: [PENDING -- confirm at Stage 1 start by reading the policies model.
+  If an approval-flag column already exists, no migration. If not, ONE migration
+  adds `requires_approval` Boolean NOT NULL default false. No `service_id` (#3).]
+
+## 47. Service Ownership
+- "Assigned" = `services.owner_id == authenticated user.id` for the specific
+  (service_name, environment) row. Separate stage in `gateway/ownership.py` (#3);
+  applies to all five tools (Section 9 clarification).
+- Admin does NOT bypass ownership (Section 9: "any role + unassigned service -> BLOCK").
+  Cost: admin cannot act on rows owned by others (auth/payment staging); admin's role
+  is approvals in Phase 11.
+- Consequence of #8: the only non-admin production row is notification-service/
+  production (senior_developer_1). E1/E4 generate programmatic traffic; #8 unchanged.
+
+## 48. Approval-Bound Cases Before Phase 11
+A permitted policy row with the approval flag set is a fail-closed BLOCK at the Policy
+stage: "Policy stage: 'tool' in 'env' requires human approval; the approval workflow
+is not implemented yet (Phase 11). Request blocked." Phase 11 turns this branch into
+APPROVAL_REQUIRED (Section 11 Step 4, first row); its tests change then, as in #34.
+INTERIM STATE (record in STATUS.md): until Phase 9/11, senior_developer and admin
+production restart and rollback on rows they own are ALLOW (mock state only). Do not
+read Phase 8-10 results for those cases as final.
+- Rejected: ALLOW (unsafe), omitting the rows (loses Phase 11 input).
+
+## 49. Phase 8 Tests and Fixtures
+- conftest.py: autouse random `JWT_SECRET` seam (as the MCP token seam); `make_user(role)`
+  with a random per-test password hashed by the real hasher; `auth_headers(user)` issues
+  a token directly (not via login); autouse idempotent `seed_policies`.
+- Stage 2 migrates every Phase 5-7 Gateway/chat test to bearer tokens (placeholder
+  policy still in force, so production tests keep the placeholder reason). `_FakeHttp.post`
+  gains `headers=None`. Stage 3 rewrites the placeholder tests against role/ownership/policy.
+- New groups: login; token failures (missing, invalid, expired, alg=none, unconfigured);
+  spoofed `user_id`; ownership on read and write tools; the full 3x5x2 matrix; the
+  approval-bound BLOCK; the audit row for an auth failure; two agent tests for Gateway
+  HTTP 502 and 409 (the open STATUS.md item).
+- Tests share the dev DB (#41), so seeds used by tests must stay convergent.
