@@ -781,4 +781,27 @@ NULL. NO migration is needed for Phase 8.
   can still act on any staging service until Stage 3 adds ownership and policy.
 - Tests added with this stage: the two agent tests for Gateway HTTP 502 and 409 from
   #49 (the open STATUS.md item), plus token-forwarding and history-isolation tests.
+
+  ## 52. Phase 8 Stage 3 -- Ownership and Policy Stage Details Left Open by #45-#48, #50
+- Ownership: `gateway/ownership.py::check_ownership(db, user, service_id, service_name,
+  environment)` returns a BLOCK reason or None. It loads the Service with `db.get` (already
+  in the session identity map after the service stage, so no extra query) and compares
+  `owner_id` to the authenticated user's id. A missing row fails closed, same reason.
+- Policy: `gateway/policy.py::check_policy(db, role, tool_name, environment)`. The role comes
+  from the users row (never the token, #42/#44). The lookup joins `policies` to `tools` by
+  tool_name and requires allowed=True. No row -> "not permitted". If several allowed rows
+  match (the table has no UNIQUE constraint) and ANY has requires_approval, the
+  approval-bound BLOCK wins (fail closed). `action` is not consulted (#50).
+- Reasons exactly as #45/#48: role and environment in single quotes; user, service and tool
+  via truncated repr (#41). `_q` is imported from gateway/validation.py, not duplicated.
+- The placeholder (`evaluate_placeholder_policy`, `PLACEHOLDER_PRODUCTION_REASON`) is deleted.
+- Final Phase 8 order: Authentication/agent -> Tool -> Arguments -> Service -> Ownership -> Policy.
+- Tests: conftest gains a session-scoped autouse `seed_policies` (converges to the same set,
+  #46). The placeholder-production tests are rewritten to use deploy_service in production
+  (approval-bound BLOCK, #48), because production restart is now ALLOW for an owning
+  admin/senior (interim, #48). New `tests/test_gateway_policy.py`: the 3x5x2 matrix against
+  3 throwaway services (one per role, each owning a staging and a production row), ownership
+  on read and write tools, admin no-bypass, ownership-before-policy, role read from the DB,
+  fail-closed duplicate policy rows. The Stage 2 test that expected a non-owner ALLOW now
+  expects an Ownership BLOCK naming the token subject.
   
