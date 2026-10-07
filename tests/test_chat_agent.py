@@ -4,6 +4,8 @@ scripted (decisions.md #24) -- no Gemini calls.
 
 Phase 8 Stage 2 (#44, #51): every chat call carries a bearer token; the agent forwards
 it to the Gateway; identity comes from the token, never from the body.
+Phase 8 Stage 3 (#48, #52): production RESTART by an owning admin is ALLOW (interim), so
+the blocked-production relay test uses production DEPLOY (approval-bound BLOCK).
 
 The agent's GatewayClient is backed by an in-process TestClient(app), so
 chat -> agent -> HTTP -> /api/gateway/tool-request -> execute_tool -> DB
@@ -106,17 +108,24 @@ def test_restart_staging_is_allowed_and_changes_state(db, test_service, make_cha
     assert history_count(db, test_service.id, "restart") == before + 1
 
 
-def test_restart_production_is_blocked_and_reason_relayed_verbatim(
+def test_deploy_production_is_blocked_and_reason_relayed_verbatim(
     db, test_service, test_service_production, make_chat, auth_headers
 ):
     # Only ONE scripted message: a second LLM call on a BLOCK would raise.
     client, _ = make_chat(
-        [tool_call_msg("restart_service", service_name=test_service.service_name, environment="production")]
+        [
+            tool_call_msg(
+                "deploy_service",
+                service_name=test_service.service_name,
+                environment="production",
+                target_version=2,
+            )
+        ]
     )
     headers = auth_headers(OWNER)
     before = history_count(db, test_service_production.id)
 
-    res = post(client, "Restart qa-test-service in production", headers)
+    res = post(client, "Deploy version 2 of qa-test-service to production", headers)
 
     assert res.status_code == 200
     body = res.json()
@@ -127,6 +136,7 @@ def test_restart_production_is_blocked_and_reason_relayed_verbatim(
     expected = (
         TestClient(app).post("/api/gateway/tool-request", json=replay, headers=headers).json()["reason"]
     )
+    assert "requires human approval" in expected
     assert expected in body["reply"]
     assert history_count(db, test_service_production.id) == before
 

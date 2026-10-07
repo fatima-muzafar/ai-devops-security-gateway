@@ -195,14 +195,18 @@ def test_acting_identity_is_the_token_subject_and_the_token_is_not_stored(db, te
 
     res = client.post(PATH, json=payload, headers=_bearer(token))
 
-    # Stage 2 keeps the placeholder policy, so any authenticated user may act on
-    # staging; Stage 3 adds ownership and role policy.
+    # qa_other authenticates fine but does not own qa-test-service, so the Ownership
+    # stage (Phase 8 Stage 3) blocks it. The reason naming the TOKEN subject, and the
+    # audit FK, prove who acted.
     assert res.status_code == 200
-    assert res.json()["decision"] == "ALLOW"
+    body = res.json()
+    assert body["decision"] == "BLOCK"
+    assert body["reason"].startswith("Ownership stage: user 'qa_other'")
     row = _row(db, "QA-S2-ID-1")
     assert row.user_id == other.id
     assert row.agent_id is not None
-    assert row.execution_status == ExecutionStatus.EXECUTED
+    assert row.service_id == test_service.id
+    assert row.execution_status == ExecutionStatus.NOT_EXECUTED
     assert token not in json.dumps(row.raw_request)
     assert token not in (row.reason or "")
     assert "authorization" not in {k.lower() for k in row.raw_request}

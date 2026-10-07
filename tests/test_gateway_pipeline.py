@@ -1,10 +1,11 @@
 """
-Phase 7 Stage 3 + Phase 8 Stage 2: the Gateway pipeline, audit rows, duplicate
-handling and MCP failure handling (decisions.md #34-#36, #41, #44, #51).
+Phase 7 Stage 3 + Phase 8 Stages 2-3: the Gateway pipeline, audit rows, duplicate
+handling and MCP failure handling (decisions.md #34-#36, #41, #44, #51, #52).
 
-Every request now carries a bearer token minted for USER (the claim in the body
-equals the token subject). Authentication-failure cases live in
-test_gateway_auth.py.
+Every request carries a bearer token minted for USER (the claim in the body equals the
+token subject). USER (`qa_test_owner`, role ADMIN) owns the throwaway service, so these
+requests reach the Policy stage. Authentication-failure cases live in test_gateway_auth.py,
+ownership/policy/matrix cases in test_gateway_policy.py.
 
 All request_ids start with QA-S3- so rows whose FKs are all NULL can be purged by
 prefix; rows with FKs are also removed by the fixtures.
@@ -23,10 +24,6 @@ client = TestClient(app)
 PATH = "/api/gateway/tool-request"
 USER = "qa_test_owner"
 SERVICE = "qa-test-service"
-PLACEHOLDER_REASON = (
-    "Phase 5 placeholder rule: production is blocked "
-    "unconditionally (not real policy -- see Phase 8)."
-)
 
 
 @pytest.fixture(autouse=True)
@@ -252,27 +249,6 @@ def test_disabled_tool_is_blocked_and_audited(db, test_service):
     assert row.tool_id is not None  # the tool row resolved; it is just disabled
     assert row.service_id is None
     assert row.execution_status == ExecutionStatus.NOT_EXECUTED
-
-
-def test_production_placeholder_blocks_with_unchanged_reason(db, test_service, test_service_production):
-    stub = _use_mcp(StubMcpClient())
-    payload = _payload(
-        "QA-S3-B-production",
-        arguments={"service_name": SERVICE, "environment": "production"},
-    )
-
-    res = _post(payload)
-
-    assert res.status_code == 200
-    body = res.json()
-    assert body["decision"] == "BLOCK"
-    assert body["reason"] == PLACEHOLDER_REASON
-    assert stub.calls == []
-    row = _row(db, "QA-S3-B-production")
-    assert row.service_id == test_service_production.id
-    assert row.environment == Environment.PRODUCTION
-    assert row.user_id is not None and row.agent_id is not None and row.tool_id is not None
-    assert _history_count(db, test_service_production.id) == 0
 
 
 # ------------------------------------------------------ request_id rules (#36)

@@ -1,14 +1,14 @@
 """
-Phase 5 tests, updated in Phase 7 Stage 3 (decisions.md #33, #34, #41) and
-Phase 8 Stage 2 (#44, #51).
+Phase 5 tests, updated in Phase 7 Stage 3 (decisions.md #33, #34, #41) and Phase 8
+Stages 2-3 (#44, #48, #51, #52).
 
 Changes from Phase 5, all deliberate:
-- every request now carries agent_id "AG001" (the Gateway requires it);
-- every request now carries a bearer token for the claimed user (Phase 8 Stage 2);
-- the production test uses `test_service_production`, because the service stage
-  now runs BEFORE the placeholder policy stage;
-- the old "unknown tool -> HTTP 400" test is replaced: an unknown tool is a
-  BLOCK decision (HTTP 200) and is audited.
+- every request carries agent_id "AG001" and a bearer token for the claimed user;
+- the production test now probes the approval-bound path: production RESTART is ALLOW for
+  an owning admin until Phase 9/11 (#48 interim), so production DEPLOY (policy flag
+  requires_approval, fail-closed BLOCK) is the case that still blocks;
+- the old "unknown tool -> HTTP 400" test is replaced: an unknown tool is a BLOCK decision
+  (HTTP 200) and is audited.
 
 The endpoint uses its own DB session, so assertions re-query after expiring the
 test session's identity map.
@@ -36,13 +36,13 @@ def _audit_row(db, request_id):
     return db.get(SecurityRequest, request_id)
 
 
-def _payload(request_id, service_name, environment, tool="restart_service"):
+def _payload(request_id, service_name, environment, tool="restart_service", **extra_arguments):
     return {
         "request_id": request_id,
         "user_id": USER,
         "agent_id": "AG001",
         "tool": tool,
-        "arguments": {"service_name": service_name, "environment": environment},
+        "arguments": {"service_name": service_name, "environment": environment, **extra_arguments},
     }
 
 
@@ -64,23 +64,26 @@ def test_restart_service_staging_allows_and_records_history(db, test_service, au
     assert _history_count(db, test_service.id, ChangeType.RESTART) == before + 1
 
 
-def test_restart_service_production_blocks_before_mcp(
+def test_deploy_service_production_blocks_pending_approval_before_mcp(
     db, test_service, test_service_production, auth_headers
 ):
-    """production (service exists) -> placeholder policy BLOCK -> MCP never
-    called -> no history row (Section 5/11)."""
+    """production deploy (owner, role permitted, approval flag) -> fail-closed Policy
+    BLOCK -> MCP never called -> no history row (Section 5/11, decisions.md #48)."""
     before = _history_count(db, test_service_production.id)
 
     response = client.post(
         PATH,
-        json=_payload("REQ-TEST-002", test_service.service_name, "production"),
+        json=_payload(
+            "REQ-TEST-002", test_service.service_name, "production",
+            tool="deploy_service", target_version=2,
+        ),
         headers=auth_headers(USER),
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["decision"] == "BLOCK"
-    assert body["reason"].startswith("Phase 5 placeholder rule")
+    assert "requires human approval" in body["reason"]
     assert "result" not in body
     assert _history_count(db, test_service_production.id) == before
 

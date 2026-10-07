@@ -1,14 +1,14 @@
 """
-Gateway pipeline orchestrator (Section 8; decisions.md #31, #34, #35, #38, #41, #51).
+Gateway pipeline orchestrator (Section 8; decisions.md #31, #34, #35, #38, #41, #51, #52).
 
 evaluate() is READ-ONLY and short-circuits on the first failing stage:
 authentication + agent identification -> tool registry -> arguments -> service ->
-placeholder policy (Stage 3 adds ownership and the real policy).
-handle_tool_request() then writes the single audit row (committed BEFORE any
-MCP call) and, on ALLOW only, calls MCP over HTTP and records the outcome.
+ownership -> policy. handle_tool_request() then writes the single audit row
+(committed BEFORE any MCP call) and, on ALLOW only, calls MCP over HTTP and records
+the outcome.
 
-Not here (still deferred): ownership/role policy, rule risk, ML, approval/TOCTOU,
-behavior_events / risk_assessments writes.
+Not here (still deferred): rule risk, ML, approval/TOCTOU, behavior_events /
+risk_assessments writes.
 """
 import logging
 from dataclasses import dataclass, field
@@ -20,7 +20,8 @@ from app.database.enums import Decision, Environment, ExecutionStatus
 from app.gateway import audit
 from app.gateway.identity import resolve_identity
 from app.gateway.mcp_client import McpUnavailableError
-from app.gateway.policy import evaluate_placeholder_policy
+from app.gateway.ownership import check_ownership
+from app.gateway.policy import check_policy
 from app.gateway.validation import check_arguments, check_tool_registry, resolve_service
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,14 @@ def evaluate(db: Session, req: GatewayRequest) -> Verdict:
     if service.block_reason:
         return Verdict(Decision.BLOCK, service.block_reason, **resolved)
 
-    policy_reason = evaluate_placeholder_policy(args.environment)
+    # Identity passed, so ident.user is set. The role is read from the DB row (#44).
+    ownership_reason = check_ownership(
+        db, ident.user, service.service_id, args.service_name, args.environment
+    )
+    if ownership_reason:
+        return Verdict(Decision.BLOCK, ownership_reason, **resolved)
+
+    policy_reason = check_policy(db, ident.user.role, req.tool, args.environment)
     if policy_reason:
         return Verdict(Decision.BLOCK, policy_reason, **resolved)
 

@@ -18,6 +18,10 @@ Phase 8 Stage 2 additions (decisions.md #49, #51):
 - `auth_headers(username)`: bearer header minted directly (not via login);
 - `make_user(username, role)`: throwaway user with a random argon2 password,
   removed (with its audit rows) in teardown.
+
+Phase 8 Stage 3 addition (decisions.md #49, #52):
+- session-scoped autouse `seed_policies`: the Policy stage reads the real
+  `policies` table; reconciling it to the matrix converges to the same set.
 """
 import secrets
 
@@ -28,9 +32,20 @@ from sqlalchemy import or_
 from app.database.base import SessionLocal
 from app.database.enums import Environment, Role
 from app.database.models import Agent, SecurityRequest, Service, ServiceStateHistory, User
+from app.database.seed import seed_policies
 from app.gateway.auth import hash_password, issue_token
 from app.gateway.mcp_client import McpClient, get_mcp_client
 from app.main import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _seed_policy_matrix():
+    session = SessionLocal()
+    try:
+        seed_policies(session)  # raises a clear error if the tool registry is not seeded
+        session.commit()
+    finally:
+        session.close()
 
 
 @pytest.fixture(autouse=True)
@@ -117,8 +132,8 @@ def ag001_agent(db):
 
 @pytest.fixture
 def test_service(db, ag001_agent):
-    """A throwaway staging service + owner (user `qa_test_owner`, which is
-    therefore a real user for Gateway authentication), deleted after the test.
+    """A throwaway staging service + owner (user `qa_test_owner`, role ADMIN, which is
+    therefore a real, owning user for the Gateway), deleted after the test.
     The qa_ / qa- prefixes never collide with SEED_USERS / SEED_SERVICES."""
     owner = User(
         username="qa_test_owner",
@@ -155,8 +170,8 @@ def test_service(db, ag001_agent):
 
 @pytest.fixture
 def test_service_production(db, test_service):
-    """Production row for the same service name, so a production request gets
-    PAST the service stage and reaches the placeholder policy stage."""
+    """Production row for the same service name, owned by the same user, so a
+    production request gets PAST the service and ownership stages."""
     prod = Service(
         service_name=test_service.service_name,
         environment=Environment.PRODUCTION,
