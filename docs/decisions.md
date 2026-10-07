@@ -756,3 +756,28 @@ NULL. NO migration is needed for Phase 8.
   seeded first. A missing tool raises a clear error; it never creates tool rows.
 - Stage 1 puts this in `seed.py` (`SEED_POLICIES`, `seed_policies`), run by
   `python -m app.database.seed`.
+
+  ## 51. Phase 8 Stage 2 -- Identity Wiring Details Left Open by #42-#45
+- Token extraction: `Authorization: Bearer <token>`. Any other scheme (Basic, ...), an
+  empty token or no header counts as "missing bearer token". Helper module
+  `backend/app/api/deps.py` (flat, #38): `get_bearer_token` (shared by the Gateway and
+  chat routes) and `require_caller` (chat only).
+- Gateway: the missing-token check runs BEFORE the "not configured" check, so a request
+  with no token is always "missing bearer token". Auth BLOCKs are HTTP 200, audited.
+- Chat (`require_caller`): signature + exp + the subject must exist in `users` (one read
+  query, session rolled back immediately so no connection is held during the agent turn).
+  Missing/invalid/expired/unknown subject -> one generic 401 `{"detail": "Not
+  authenticated."}`; unconfigured JWT_SECRET -> 503. No LLM call happens on 401/503.
+- `GatewayRequest` gains `token` (repr=False). The token is never put in `raw_request`,
+  reasons, logs, prompts or history. `Caller.token` is also repr=False.
+- `resolve_identity(db, token, claimed_user_id, agent_name)` replaces the Phase 7
+  function (same name, no username lookup). `IdentityResult` carries the `User` row so
+  Stage 3 (ownership/policy) needs no second lookup; `user_id` is a property.
+- Reasons: "Authentication stage: ..." per #45. The Phase 7 "Identity stage: unknown
+  user." no longer exists; agent-stage texts are unchanged.
+- `GatewayClient.submit(tool_request, token=None)` sends the Bearer header; the agent
+  receives the token from chat (`handle_message(..., token=...)`).
+- Stage 2 keeps the placeholder policy (BLOCK if production). Any authenticated user
+  can still act on any staging service until Stage 3 adds ownership and policy.
+- Tests added with this stage: the two agent tests for Gateway HTTP 502 and 409 from
+  #49 (the open STATUS.md item), plus token-forwarding and history-isolation tests.
