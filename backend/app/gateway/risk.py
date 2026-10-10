@@ -27,6 +27,8 @@ COND_S1 = "S1_deploy_then_rollback"
 COND_S2 = "S2_consecutive_non_executed_run"
 COND_S3 = "S3_identical_destructive_repeat"
 MARKER_ML_STUB = "ml=stub"
+# #58: final MEDIUM/HIGH is recorded but NOT enforced until Phase 11 (decision is still ALLOW).
+MARKER_INTERIM_NOT_ENFORCED = "interim: not enforced"
 
 STATE_CHANGING_TOOLS = frozenset({"restart_service", "rollback_deployment", "deploy_service"})
 

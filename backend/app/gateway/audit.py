@@ -1,17 +1,40 @@
 """
-Audit persistence (decisions.md #35, #36, #41): exactly ONE security_requests
-INSERT per request, committed BEFORE any MCP call; then, on ALLOW only, one
-UPDATE of execution_status.
+Audit persistence (decisions.md #35, #36, #41, #58): exactly ONE security_requests
+INSERT per request and, for requests that passed every Step 1 stage, ONE
+risk_assessments INSERT -- both in the SAME commit, BEFORE any MCP call; then, on ALLOW
+only, one UPDATE of execution_status.
+
+A failed risk write rolls the audit row back too (HTTP 500, MCP not called, no trace of
+the request). Accepted limitation (#58): it fails closed.
 """
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database.enums import ExecutionStatus
-from app.database.models import SecurityRequest
+from app.database.enums import Decision, ExecutionStatus, RiskLevel
+from app.database.models import RiskAssessment, SecurityRequest
+from app.gateway.risk import MARKER_INTERIM_NOT_ENFORCED
 
 
 class DuplicateRequestError(Exception):
     """request_id already exists (#36). The original row is untouched."""
+
+
+def _build_risk_row(req, verdict) -> RiskAssessment:
+    """#58: decision = the ENACTED decision (ALLOW in Phase 9). Final MEDIUM/HIGH is
+    recorded but not enforced until Phase 11, so the row says so."""
+    risk = verdict.risk
+    reasons = list(risk.reasons)
+    if verdict.decision is Decision.ALLOW and risk.final_risk_level is not RiskLevel.LOW:
+        reasons.append(MARKER_INTERIM_NOT_ENFORCED)
+    return RiskAssessment(
+        request_id=req.request_id,
+        rule_risk_level=risk.rule_risk_level,
+        ml_risk_level=risk.ml_risk_level,
+        final_risk_level=risk.final_risk_level,
+        decision=verdict.decision,
+        reasons=reasons,
+        is_production=risk.is_production,
+    )
 
 
 def record_decision(db: Session, req, verdict) -> None:
@@ -31,6 +54,8 @@ def record_decision(db: Session, req, verdict) -> None:
         )
     )
     try:
+        if verdict.risk is not None:
+            db.add(_build_risk_row(req, verdict))
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -38,6 +63,9 @@ def record_decision(db: Session, req, verdict) -> None:
         # integrity failure is a bug and must not be misreported.
         if db.get(SecurityRequest, req.request_id) is not None:
             raise DuplicateRequestError(req.request_id)
+        raise
+    except Exception:
+        db.rollback()  # #58: a failed risk write also removes the audit row (fails closed)
         raise
 
 

@@ -14,6 +14,7 @@ from sqlalchemy import or_
 
 from app.database.base import SessionLocal
 from app.database.enums import Decision, Environment, ExecutionStatus, Role
+from qa_cleanup import delete_requests
 from app.database.models import Policy, SecurityRequest, Service, ServiceStateHistory, Tool, User
 from app.database.seed import SEED_POLICIES
 from app.gateway.auth import issue_token
@@ -54,7 +55,7 @@ def _wipe(session):
     if service_ids:
         conditions.append(SecurityRequest.service_id.in_(service_ids))
     if conditions:
-        session.query(SecurityRequest).filter(or_(*conditions)).delete(synchronize_session=False)
+        delete_requests(session, or_(*conditions))
     if service_ids:
         session.query(ServiceStateHistory).filter(
             ServiceStateHistory.service_id.in_(service_ids)
@@ -101,9 +102,7 @@ def purge_qa_p_rows():
     def purge():
         session = SessionLocal()
         try:
-            session.query(SecurityRequest).filter(
-                SecurityRequest.request_id.like("QA-P-%")
-            ).delete(synchronize_session=False)
+            delete_requests(session, SecurityRequest.request_id.like("QA-P-%"))
             session.commit()
         finally:
             session.close()

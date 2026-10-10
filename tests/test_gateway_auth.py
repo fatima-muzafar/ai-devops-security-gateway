@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.database.base import SessionLocal
 from app.database.enums import Decision, ExecutionStatus
+from qa_cleanup import delete_requests
 from app.database.models import SecurityRequest, User
 from app.gateway.auth import issue_token
 from app.gateway.mcp_client import get_mcp_client
@@ -32,9 +33,7 @@ def purge_qa_s2_rows():
     def purge():
         session = SessionLocal()
         try:
-            session.query(SecurityRequest).filter(
-                SecurityRequest.request_id.like("QA-S2-%")
-            ).delete(synchronize_session=False)
+            delete_requests(session, SecurityRequest.request_id.like("QA-S2-%"))
             session.commit()
         finally:
             session.close()

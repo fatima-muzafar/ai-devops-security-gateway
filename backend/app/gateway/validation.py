@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.database.enums import Environment
+from app.database.enums import Environment, Sensitivity
 from app.database.models import Service, Tool
 from app.mcp.schemas import TOOL_ARG_SCHEMAS
 
@@ -29,6 +29,7 @@ def _q(value: Any) -> str:
 class ToolCheck:
     tool_id: int | None
     block_reason: str | None
+    sensitivity: Sensitivity | None = None  # input to rule risk (#53/#54); set when usable
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ def check_tool_registry(db: Session, tool_name: str) -> ToolCheck:
         )
     if not row.enabled:
         return ToolCheck(row.id, f"Tool registry stage: tool {_q(tool_name)} is disabled.")
-    return ToolCheck(row.id, None)
+    return ToolCheck(row.id, None, row.sensitivity)
 
 
 def check_arguments(tool_name: str, arguments: dict[str, Any]) -> ArgumentsCheck:

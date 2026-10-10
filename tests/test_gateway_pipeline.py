@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.database.base import SessionLocal
 from app.database.enums import ChangeType, Decision, Environment, ExecutionStatus
+from qa_cleanup import delete_requests
 from app.database.models import SecurityRequest, ServiceStateHistory, Tool
 from app.gateway.auth import issue_token
 from app.gateway.mcp_client import McpClient, McpResponse, McpUnavailableError, get_mcp_client
@@ -31,9 +32,7 @@ def purge_qa_s3_rows():
     def purge():
         session = SessionLocal()
         try:
-            session.query(SecurityRequest).filter(
-                SecurityRequest.request_id.like("QA-S3-%")
-            ).delete(synchronize_session=False)
+            delete_requests(session, SecurityRequest.request_id.like("QA-S3-%"))
             session.commit()
         finally:
             session.close()

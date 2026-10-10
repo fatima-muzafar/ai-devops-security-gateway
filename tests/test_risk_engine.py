@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, or_
 
 from app.database.enums import Decision, Environment, ExecutionStatus, RiskLevel, Role, Sensitivity
+from qa_cleanup import delete_requests
 from app.database.models import SecurityRequest, Service, ServiceStateHistory, Tool
 from app.gateway import risk_constants as C
 from app.gateway.risk import (
@@ -129,9 +130,7 @@ def w(db, make_user):
     yield World(db, me, other, *svcs, tool_ids)
     db.rollback()
     ids = [s.id for s in svcs]
-    db.query(SecurityRequest).filter(SecurityRequest.service_id.in_(ids)).delete(
-        synchronize_session=False
-    )
+    delete_requests(db, SecurityRequest.service_id.in_(ids))
     db.query(ServiceStateHistory).filter(ServiceStateHistory.service_id.in_(ids)).delete(
         synchronize_session=False
     )

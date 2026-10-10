@@ -31,6 +31,7 @@ from sqlalchemy import or_
 
 from app.database.base import SessionLocal
 from app.database.enums import Environment, Role
+from qa_cleanup import delete_requests
 from app.database.models import Agent, SecurityRequest, Service, ServiceStateHistory, User
 from app.database.seed import seed_policies
 from app.gateway.auth import hash_password, issue_token
@@ -104,9 +105,7 @@ def make_user(db):
     db.rollback()
     ids = [u.id for u in db.query(User).filter(User.username.in_(created)).all()]
     if ids:
-        db.query(SecurityRequest).filter(SecurityRequest.user_id.in_(ids)).delete(
-            synchronize_session=False
-        )
+        delete_requests(db, SecurityRequest.user_id.in_(ids))
         db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False)
         db.commit()
 
@@ -125,7 +124,7 @@ def ag001_agent(db):
 
     if created:
         db.rollback()
-        db.query(SecurityRequest).filter_by(agent_id=agent_id).delete()
+        delete_requests(db, SecurityRequest.agent_id == agent_id)
         db.query(Agent).filter_by(id=agent_id).delete()
         db.commit()
 
@@ -159,9 +158,9 @@ def test_service(db, ag001_agent):
 
     # FK order: audit rows and history rows -> service -> owner.
     db.rollback()
-    db.query(SecurityRequest).filter(
-        or_(SecurityRequest.user_id == owner_id, SecurityRequest.service_id == service_id)
-    ).delete(synchronize_session=False)
+    delete_requests(
+        db, or_(SecurityRequest.user_id == owner_id, SecurityRequest.service_id == service_id)
+    )
     db.query(ServiceStateHistory).filter_by(service_id=service_id).delete()
     db.query(Service).filter_by(id=service_id).delete()
     db.query(User).filter_by(id=owner_id).delete()
@@ -187,9 +186,7 @@ def test_service_production(db, test_service):
     yield prod
 
     db.rollback()
-    db.query(SecurityRequest).filter(SecurityRequest.service_id == prod_id).delete(
-        synchronize_session=False
-    )
+    delete_requests(db, SecurityRequest.service_id == prod_id)
     db.query(ServiceStateHistory).filter_by(service_id=prod_id).delete()
     db.query(Service).filter_by(id=prod_id).delete()
     db.commit()

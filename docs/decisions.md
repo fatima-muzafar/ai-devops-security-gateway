@@ -852,3 +852,21 @@ Lateral movement onto an unowned service is an Ownership BLOCK (Section 11 Step 
 62. S2 Run Is Strictly Consecutive (refines #56)
 
 S2 looks at the user's 3 most recent prior security_requests rows inside the 10-minute window, of ANY kind. It fires only if all 3 qualify (a #57 denial, or ALLOW + execution_status=failed). Any other row between them -- an executed request, a Tool/Arguments/Service BLOCK, a mismatched-claim row -- breaks the run. Both the denial filter and the qualifying test are built from one shared SQL expression (gateway/risk.py), so S2 and #57 cannot drift apart. Why: skipping noise rows needs a second stage allow-list that could diverge from #57's structural filter; a broken run costs only a false negative, and #57 still catches the non-consecutive case at MEDIUM. S2 is the "tight burst" signal (HIGH), #57 the "sustained" one. Rejected: skipping non-qualifying noise rows (extra filter, extra drift risk). Limitations: an LLM that malforms one argument set mid-run, or an attacker interleaving one read, resets S2. Accepted and listed in the report. Status: new decision (refines #56).
+
+## 63. Phase 9 Stage 2 -- Wiring Details Left Open by #58
+- evaluate() stays read-only: after Policy passes it calls assess_risk() and returns it as
+  Verdict.risk (None for every BLOCK). ToolCheck gains `sensitivity` (default None, set on the
+  usable-tool path) so the engine reads the registry value (#1, #11), not a copy in risk.py.
+- requires_approval is passed as False: an approval-bound policy row BLOCKs at Policy before
+  risk is reached (#48). Phase 11 feeds the real flag when that branch becomes APPROVAL_REQUIRED.
+- audit.record_decision() owns BOTH inserts and the single commit (#58). IntegrityError keeps
+  the #36 duplicate handling (rollback, then 409 only if the row exists). Any other exception
+  rolls back explicitly and re-raises (HTTP 500, MCP never reached).
+- Interim marker: reasons gets "interim: not enforced" only when decision=ALLOW and final risk
+  is MEDIUM/HIGH; LOW rows stay clean so E5/Approval Routing filters can key on it.
+- Test rule: risk_assessments.request_id is a FK, so EVERY test teardown that deletes audit
+  rows must go through tests/qa_cleanup.py::delete_requests(). A new raw delete of
+  security_requests in a test will fail with an FK error once a risk row exists.
+Limitations: a bug in risk computation or the risk write fails ALL allowed traffic (500) --
+accepted (#58); production-deploy attempts still leave no risk evidence until Phase 11.
+Status: new decision (implementation detail; no plan change).

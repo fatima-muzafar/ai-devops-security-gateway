@@ -7,8 +7,12 @@ ownership -> policy. handle_tool_request() then writes the single audit row
 (committed BEFORE any MCP call) and, on ALLOW only, calls MCP over HTTP and records
 the outcome.
 
-Not here (still deferred): rule risk, ML, approval/TOCTOU, behavior_events /
-risk_assessments writes.
+Phase 9: after every Step 1 stage passes, evaluate() computes rule risk (gateway/risk.py,
+decisions.md #53-#59, #62; read-only) and the Verdict carries it; the audit module writes
+it with the audit row in ONE commit (#58). Risk is RECORDED, NOT ENFORCED: the decision is
+still ALLOW for any final level until Phase 11.
+
+Not here (still deferred): ML, approval/TOCTOU, behavior_events writes.
 """
 import logging
 from dataclasses import dataclass, field
@@ -22,6 +26,7 @@ from app.gateway.identity import resolve_identity
 from app.gateway.mcp_client import McpUnavailableError
 from app.gateway.ownership import check_ownership
 from app.gateway.policy import check_policy
+from app.gateway.risk import RiskEvaluation, assess_risk
 from app.gateway.validation import check_arguments, check_tool_registry, resolve_service
 
 logger = logging.getLogger(__name__)
@@ -51,6 +56,7 @@ class Verdict:
     tool_id: int | None = None
     service_id: int | None = None
     environment: Environment | None = None
+    risk: RiskEvaluation | None = None  # set only for requests that passed every Step 1 stage
 
 
 def evaluate(db: Session, req: GatewayRequest) -> Verdict:
@@ -85,7 +91,18 @@ def evaluate(db: Session, req: GatewayRequest) -> Verdict:
     if policy_reason:
         return Verdict(Decision.BLOCK, policy_reason, **resolved)
 
-    return Verdict(Decision.ALLOW, None, **resolved)
+    # Every Step 1 stage passed: compute risk (read-only). requires_approval is False here
+    # because an approval-bound policy row already BLOCKed above (#48); Phase 11 will feed it.
+    risk = assess_risk(
+        db,
+        user_id=ident.user.id,
+        tool_name=req.tool,
+        sensitivity=tool.sensitivity,
+        environment=args.environment,
+        service_id=service.service_id,
+        requires_approval=False,
+    )
+    return Verdict(Decision.ALLOW, None, risk=risk, **resolved)
 
 
 def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[str, Any]:
