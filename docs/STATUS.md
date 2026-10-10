@@ -1,8 +1,8 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Current Phase: Phase 8 COMPLETE -- Authentication, identity, policy, ownership, environment.
-Next: Phase 9 (rule-based risk engine). Decisions #1-#52 locked.
+Current Phase: Phase 9 COMPLETE -- Rule-based risk engine (computed and recorded, NOT enforced).
+Next: Phase 10 (continuous synthetic behavior-event generation). Decisions #1-#63 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -24,30 +24,77 @@ Next: Phase 9 (rule-based risk engine). Decisions #1-#52 locked.
     (#44, #45, #51)
   - Stage 3 -- gateway/ownership.py, gateway/policy.py (placeholder removed), pipeline
     order, matrix + ownership tests (#52)
+- Phase 9 -- Rule-Based Risk Engine
+  - Step 0 -- decisions #53-#61 (levels, window key, history source, denials, write order,
+    ML stub, response contract, E2/Demo 7 wording)
+  - Stage 1 -- gateway/risk.py + risk_constants.py: pure, read-only `assess_risk()`; #62
+  - Stage 2 -- pipeline wiring: Verdict.risk, audit writes security_requests + risk_assessments
+    in ONE commit before MCP; tests/qa_cleanup.py; #63
+  - Stage 3 -- close-out: real-Gemini smoke verified by DB query; this file
 
 ## Current Repo State
-- Last verified commit: `2b73f92`
+- Last verified commit: `672877f`
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
-- Phase 1 through Phase 8 are complete.
+- Phase 1 through Phase 9 are complete.
 - Database: "11 tables. Migration a8d41c7e5b92 applied (audit columns on security_requests,
-  no new table -- #32, #39). Phase 8 added no migration; `policies` already had
-  `requires_approval` (#50)."
-- Full suite: "180/180 passing after Phase 8 (user-verified)."
-- `docs/decisions.md` has 52 entries (#1-#52; #42-#52 are Phase 8).
+  no new table -- #32, #39). Phases 8 and 9 added no migration; `policies` already had
+  `requires_approval` (#50) and `risk_assessments` already fit the Phase 9 rows (#58)."
+- Full suite: "261/261 passing after Phase 9 (user-verified): 180 (Phase 1-8) + 63 risk-engine
+  + 18 pipeline-wiring."
+- `docs/decisions.md` has 63 entries (#1-#63; #53-#63 are Phase 9).
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
 - Phase 8 smoke (real Gemini, real uvicorn): login, chat allow, Policy BLOCK, Ownership
   BLOCK, approval-bound BLOCK (user-verified).
+- Phase 9 smoke (real Gemini, real uvicorn): staging restart LOW, production restart MEDIUM + interim marker (ALLOW), production deploy BLOCK with no risk row (user-verified).
+  result after running the three DB-checked cases (owned staging restart LOW; production restart
+  MEDIUM + "interim: not enforced" yet ALLOW; production deploy BLOCK with no risk row).
 
-## INTERIM STATE (Phase 8 -> Phase 11) -- read before trusting any result
-Until rule risk (Phase 9) is consumed by the decision engine (Phase 11), senior_developer and
-admin production restart and rollback on rows they own are ALLOW (mock state only). Do not
-read Phase 8-10 results for those cases as final (#48). Concretely: admin owns auth-service
-and payment-service production; senior_developer_1 owns notification-service production.
-Production deploy is NOT affected: it is an approval-bound fail-closed BLOCK (#48).
+## INTERIM STATE (Phase 9 -> Phase 11) -- read before trusting any result
+Risk is COMPUTED AND RECORDED, NOT ENFORCED until Phase 11. Every request that passes the Step 1
+stages gets a `risk_assessments` row, but the decision is still ALLOW for any final level
+(#58). Concretely: senior_developer and admin production restart and rollback on rows they own
+are ALLOW with final MEDIUM/HIGH and the marker "interim: not enforced" in `reasons`. Admin
+owns auth-service and payment-service production; senior_developer_1 owns
+notification-service production. Production deploy is NOT affected: it is an approval-bound
+fail-closed BLOCK (#48) and gets NO risk row (it stops at Policy, before risk).
+- Exclude "interim: not enforced" rows from E5 and Approval Routing Accuracy, or regenerate
+  them after Phase 11 (#58). Rows before Phase 14 carry "ml=stub" and are excluded from E2 (#59).
+- Do not read Phase 9-10 results for production state changes as final.
+
+## Phase 9 Summary (complete)
+`gateway/risk.py::assess_risk()` is pure and read-only; `evaluate()` calls it only after every
+Step 1 stage passed and returns it as `Verdict.risk` (None for any BLOCK). `audit.record_decision()`
+inserts security_requests + risk_assessments in ONE commit BEFORE any MCP call (#58, #63).
+- rule_risk_level (#53, #54): reads LOW and exempt from every condition; owned staging
+  restart/rollback/deploy LOW; production state change MEDIUM (restart) / HIGH (rollback, deploy)
+  via the registry sensitivity (#1); policy approval flag HIGH (unreachable now, #48);
+  repeated denials MEDIUM; S1 MEDIUM; S2 HIGH; S3 MEDIUM; highest wins.
+- Sequence rules (#56, #62), history read from `security_requests` before the current row exists:
+  S1 deploy->rollback per (user, service) 10 min; S2 three consecutive qualifying rows per user
+  10 min (strictly consecutive); S3 third identical destructive action per (user, tool, service)
+  5 min. Repeated denials (#57): >=3 Ownership/Policy BLOCKs of the authenticated user in 10 min,
+  selected structurally (BLOCK with user_id, tool_id, service_id all non-null).
+- ml_risk_level is a fixed LOW stub with the marker "ml=stub" (#59); final = max(rule, ml).
+- Response contract UNCHANGED: no `risk_level` until Phase 11 (#60).
+- All counts/windows live in `gateway/risk_constants.py`: uncalibrated; FREEZE before Phase 16.
+- Per-request history-query cost (pinned by a test): reads 0, restart/deploy 3, rollback 4. E3
+  must measure this.
+- Tests: `tests/test_risk_engine.py` (engine, explicit created_at, boundaries, a real-pipeline
+  check of the #57 filter) and `tests/test_gateway_risk_wiring.py` (rows, ordering, rollback,
+  409). Every test teardown that deletes audit rows MUST use `tests/qa_cleanup.py::
+  delete_requests()` (risk_assessments FK, #63).
+- Known limitations (state in report): a bug in risk computation or the risk write fails ALL
+  allowed traffic with HTTP 500 and leaves no trace of the request (fail closed, #58); S2 is
+  evaded by one interleaved executed request or noise row (#62); window comparison uses the
+  Python clock against DB-set `created_at` (fine on one host); #48 approval-bound Policy BLOCKs
+  count toward repeated denials until Phase 11 (#57); "distinct services touched" is a weak
+  feature (max 2); Section 15's "Ownership + ML" row overstates the ML role (#61); the planning
+  doc still says the window is per (identity, service, environment): #55 supersedes it for
+  Phase 10+ and the final report MUST state the deviation.
 
 ## Phase 8 Summary (complete)
 Pipeline order (evaluate() is read-only and short-circuits on the first failing stage):
@@ -120,27 +167,31 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
 ## Open items
 - Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool
   calls after a tool result are ignored). Resolve before Phase 16/17.
-- The interim production ALLOW (above) closes in Phase 11, when the decision mapping
-  consumes rule_risk_level. Phase 9 only COMPUTES and records risk.
-- Decide in Phase 9 Step 0: whether the response gains a `risk_level` field (#38 says none
-  until Phase 9; the Phase 6 agent depends on the current contract), and where the
-  "repeated denied requests" rule reads history from before `behavior_events` exists
-  (Phase 10).
-- Full suite took ~84 s after Phase 8 Stage 2 (was ~8 s). Likely argon2 hashing in tests;
-  not diagnosed. Optional: `pytest tests -q --durations=8`.
+- The interim production ALLOW closes in Phase 11, when the decision mapping consumes
+  final_risk_level (Section 11 Step 4). Phase 11 Step 0 must decide: whether `risk_level` appears
+  in the response (only on APPROVAL_REQUIRED, or not at all, #60); who approves an admin's own
+  production request (admin owns two production rows, #47); how the #48 approval-bound BLOCK
+  becomes APPROVAL_REQUIRED and feeds `requires_approval=True` into assess_risk (#63).
+- Phase 10 Step 0 must fix: the per-action record for the per-identity N = 5 window (#55); how the
+  synthetic generator avoids tripping S3/#57 on every identity (distinct identities, spacing or
+  explicit timestamps, #56); whether blocked attempts are logged with outcome=blocked (#61).
+- Phase 15: do not designate production rollback as a BLOCK-class "irreversible" action (#54).
+- Phase 16: rewrite Demo 7 per #61 (one identity alternating across its two owned rows plus a
+  separate denied attempt on a third service).
+- Full suite takes ~30 s locally (was ~8 s before Phase 8 Stage 2). Likely argon2 hashing in
+  `make_user` (two users per test in the new files); not diagnosed. Optional:
+  `pytest tests -q --durations=8`.
 
-## Next Task -- Phase 9
-Rule-based risk engine (Section 10, Section 11 Step 2): fixed `rule_risk_level`
-{LOW, MEDIUM, HIGH} per condition (production targeting, sensitive tool, repeated denials,
-approval-required operations), max of simultaneous conditions; the enumerated
-rule-catchable sequence list (deploy then rollback on one service, N consecutive denials
-then a success, identical destructive action repeated within a window); `risk_assessments`
-writes. Phase 9 does NOT add APPROVAL_REQUIRED, ML or `behavior_events`. Before coding:
-read Planning Sections 10, 11 (Steps 2-4), 16 (`risk_assessments`) and decisions #1, #38,
-#46, #48; resolve the open items above; write new decisions.md entries BEFORE code.
+## Next Task -- Phase 10
+Continuous synthetic behavior-event generation (Section 27 Phase 10; Section 16 `behavior_events`;
+Section 23). Log, from Semester 1 on, the fields needed later so no backfill is required: identity,
+service, environment, tool, timestamp, outcome, plus what `version_change_delta` (integer
+versions, Section 13) and `off_hours_flag` need. Phase 10 adds NO ML. Before coding: read Planning
+Sections 10, 13, 16, 23, 24 and decisions #7, #55, #56, #61; resolve the Phase 10 Step 0 items in
+Open items; write new decisions.md entries BEFORE code.
 
 ## Important
-- Follow Planning Revision 6 and `docs/decisions.md` (52 entries).
-- Do not reorder, remove, or add phases. Do not redo Phase 1-8 unless asked.
+- Follow Planning Revision 6 and `docs/decisions.md` (63 entries).
+- Do not reorder, remove, or add phases. Do not redo Phase 1-9 unless asked.
 - Anything genuinely undecided mid-implementation gets a new decisions.md
   entry BEFORE code, not after.
