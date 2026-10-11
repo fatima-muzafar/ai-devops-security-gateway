@@ -12,16 +12,21 @@ decisions.md #53-#59, #62; read-only) and the Verdict carries it; the audit modu
 it with the audit row in ONE commit (#58). Risk is RECORDED, NOT ENFORCED: the decision is
 still ALLOW for any final level until Phase 11.
 
-Not here (still deferred): ML, approval/TOCTOU, behavior_events writes.
+Phase 10: after the final outcome (and after the audit commit) a behavior_events row is written
+by gateway/behavior_log.py in its OWN commit, fail-open (decisions.md #69, #70).
+
+Not here (still deferred): ML, approval/TOCTOU.
 """
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.database.enums import Decision, Environment, ExecutionStatus
+from app.database.enums import Decision, Environment, EventOutcome, ExecutionStatus
 from app.gateway import audit
+from app.gateway.behavior_log import record_behavior_event
 from app.gateway.identity import resolve_identity
 from app.gateway.mcp_client import McpUnavailableError
 from app.gateway.ownership import check_ownership
@@ -106,6 +111,7 @@ def evaluate(db: Session, req: GatewayRequest) -> Verdict:
 
 
 def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)  # #70: the event timestamp, captured at pipeline start
     verdict = evaluate(db, req)
 
     # One audit INSERT, committed BEFORE any MCP call (#35). A duplicate
@@ -113,6 +119,9 @@ def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[st
     audit.record_decision(db, req, verdict)
 
     if verdict.decision is Decision.BLOCK:
+        record_behavior_event(
+            db, verdict, request_id=req.request_id, timestamp=started_at, outcome=EventOutcome.BLOCKED
+        )
         return {
             "request_id": req.request_id,
             "decision": Decision.BLOCK.value,
@@ -124,6 +133,9 @@ def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[st
     except McpUnavailableError as exc:
         logger.error("MCP unavailable for %s: %s", req.request_id, exc)
         audit.mark_execution(db, req.request_id, ExecutionStatus.FAILED)
+        record_behavior_event(
+            db, verdict, request_id=req.request_id, timestamp=started_at, outcome=EventOutcome.FAILED
+        )
         raise ExecutionFailedError(
             f"MCP execution failed: MCP unavailable (request {req.request_id})."
         ) from exc
@@ -132,13 +144,25 @@ def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[st
         detail = str(response.body.get("detail", ""))[:200]
         logger.error("MCP returned HTTP %s for %s: %s", response.status_code, req.request_id, detail)
         audit.mark_execution(db, req.request_id, ExecutionStatus.FAILED)
+        record_behavior_event(
+            db, verdict, request_id=req.request_id, timestamp=started_at, outcome=EventOutcome.FAILED
+        )
         raise ExecutionFailedError(
             f"MCP execution failed (HTTP {response.status_code}): {detail}"
         )
 
     audit.mark_execution(db, req.request_id, ExecutionStatus.EXECUTED)
+    result = response.body.get("result")
+    record_behavior_event(
+        db,
+        verdict,
+        request_id=req.request_id,
+        timestamp=started_at,
+        outcome=EventOutcome.ALLOWED,
+        result=result,
+    )
     return {
         "request_id": req.request_id,
         "decision": Decision.ALLOW.value,
-        "result": response.body.get("result"),
+        "result": result,
     }

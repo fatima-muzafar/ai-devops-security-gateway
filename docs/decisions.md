@@ -930,3 +930,17 @@ RNG: random.Random(f"{seed}:{username}") per identity, so adding an identity nev
 generate_normal_events(db, *, seed, anchor, days, usernames=None, service_ids=None): service_ids restricts the universe (tests use throwaway services). The simulator starts at (1,1) and never reads the services table.
 Tests: tests/qa_cleanup.py gains delete_behavior_events(); delete_requests() is UNCHANGED in Stage 1 (it gains the live-event delete in Stage 2, #75). A generator test fixture must depend on make_user so it tears down (events, history, services) before the users are deleted.
 Known property (state in report): executed state changes are ~6.6% of events (about 18-39 per identity per 30 days); rollbacks are rare (3 in 30 days). Restart/deploy-frequency features are sparse on normal data. Volume/mix is a Phase 13 call (#74). Status: new decision (implementation detail; no plan change).
+
+77. Phase 10 Stage 2 -- Live Hook Details Left Open by #66, #69, #70, #75
+
+Written alongside the hook code, not before it (the same process slip as #76); recorded before commit.
+
+Module: gateway/behavior_log.py::record_behavior_event() (flat layout, #38); the pipeline calls it at four points: BLOCK (after the audit commit), ALLOW executed (after mark_execution EXECUTED), and both MCP-failure branches (after mark_execution FAILED, before raising the 502).
+Filter (#69): is_loggable(verdict) = user_id, agent_id, tool_id, service_id and environment all non-null. This is the #57 structural filter and is defence in depth: an unresolved id could not be looked up anyway, so a test also asserts the skip is silent (no warning), not a swallowed error.
+Timestamp: datetime.now(timezone.utc) captured at the START of handle_tool_request (#70), passed to the writer; the event shares one instant with its stored off_hours_flag (#67).
+Versions (#66): copied from response.body["result"]["result"]["version_before"/"version_after"] (the execute_tool dict, #40) only for an ALLOWED deploy/rollback, and only when BOTH are ints; otherwise NULL plus a warning. Failed, blocked, restart and reads never read the result.
+The writer re-loads Service and Tool with db.get (expired after the audit commit): two SELECTs, one INSERT, one COMMIT per logged request, about 2 ms median locally; E3 must measure it on the real path.
+Fail-open (#70): the whole body is wrapped; on any exception: rollback, one warning with traceback, response unchanged. Limitation: a swallowed failure leaves a hole in that identity's N = 5 window.
+tests/qa_cleanup.py::delete_requests() now deletes behavior_events by the same request_id subquery BEFORE risk_assessments and security_requests (#75). Synthetic rows (request_id NULL) are not reachable through it; they go through delete_behavior_events() (#76).
+Response contract and Phase 9 behaviour are unchanged; the history-query-count test is unaffected.
+Known unkillable property (state in report): "timestamp captured at pipeline start" cannot be distinguished from "captured at the hook" by a test; both fall inside the request's wall-clock bounds. Status: new decision (implementation detail; no plan change).
