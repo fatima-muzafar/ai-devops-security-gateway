@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, func
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-from app.database.enums import Environment, EventOutcome
+from app.database.enums import Environment, EventOutcome, EventSource
 
 
 class BehaviorEvent(Base):
@@ -40,6 +40,21 @@ class BehaviorEvent(Base):
     # configured working-hours window. Computed at write time, stored, not
     # derived later.
     off_hours_flag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # decisions.md #65: provenance. Server default 'live' so a writer that forgets the
+    # marker can never silently create synthetic-looking rows.
+    source: Mapped[EventSource] = mapped_column(
+        SAEnum(EventSource, native_enum=False, create_constraint=True, values_callable=lambda e: [x.value for x in e]),
+        nullable=False,
+        default=EventSource.LIVE,
+        server_default=EventSource.LIVE.value,
+    )
+
+    # decisions.md #75: joins a live event to its audit row (Section 16 clarification).
+    # NULL for synthetic rows.
+    request_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("security_requests.request_id"), nullable=True
+    )
 
     identity: Mapped["User"] = relationship("User")
     agent: Mapped["Agent"] = relationship("Agent")

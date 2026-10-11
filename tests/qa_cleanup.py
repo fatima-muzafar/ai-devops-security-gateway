@@ -14,3 +14,12 @@ def delete_requests(session, *criteria) -> int:
         synchronize_session=False
     )
     return session.query(SecurityRequest).filter(*criteria).delete(synchronize_session=False)
+
+
+def delete_behavior_events(session, *criteria) -> int:
+    """Phase 10 (decisions.md #75): behavior_events FK-reference users, services, agents,
+    tools and (live rows) security_requests. A test that creates events must delete them
+    BEFORE deleting those parents. Stage 2 also makes delete_requests() remove live events."""
+    from app.database.models import BehaviorEvent
+
+    return session.query(BehaviorEvent).filter(*criteria).delete(synchronize_session=False)

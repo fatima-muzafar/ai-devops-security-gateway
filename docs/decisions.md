@@ -870,3 +870,63 @@ S2 looks at the user's 3 most recent prior security_requests rows inside the 10-
 Limitations: a bug in risk computation or the risk write fails ALL allowed traffic (500) --
 accepted (#58); production-deploy attempts still leave no risk evidence until Phase 11.
 Status: new decision (implementation detail; no plan change).
+
+Phase 10 Decisions -- Behavior-Event Logging and Synthetic Generation
+64. Scope -- Normal-Behavior Generator, On Demand
+
+Planning Phase 10 says "continuous synthetic generation". Resolved: a seeded, deterministic, on-demand CLI producing NORMAL behavior only; no daemon or scheduler. Anomalous/staged categories, labels and sequence ids are Phase 13 (Section 27). Why: Section 23 trains Isolation Forest primarily on normal data. "Accumulate early" only binds LIVE rows (the live hook, #70, is what cannot be backfilled; service_state_history must not be used to derive it, #7). Seeded rows with explicit timestamps can be generated any time. Phase 10 adds no ML, no APPROVAL_REQUIRED, no response-contract or Phase 9 change. Limitations: reads "continuous" loosely; the report says so. Rejected: daemon; anomalies now (labels need a schema Phase 13 owns). Status: new decision (interpretation of Phase 10 wording).
+
+65. source Marker
+
+New column behavior_events.source: Python enum EventSource {live, synthetic} + CHECK ck_behavior_events_source (#4), NOT NULL, server default 'live'. Why: #59 (a lost marker contaminates data); also makes the generator purgeable. Constraint for Phase 13/14: training reads source='synthetic'; inference windows (#55) read source='live' only, so a live Demo 9 window is never padded with old synthetic rows. Rejected: request_id IS NULL as an implicit marker; separate synthetic users (owner_id is a single FK, #8). Status: new decision.
+
+66. Per-Action Record (resolves Phase 10 Step 0 item 1; uses the real columns)
+
+Columns as built: identity_id (= users.id, the #55 window key), agent_id (NOT NULL; live = resolved agent row, synthetic = the AG001 row, generator fails clearly if missing), service_id, environment (from the service row), tool_id, outcome, timestamp, version_before/after, off_hours_flag. Added by #75: source, request_id. The N = 5 window is a query: last 5 rows per identity_id ordered by (timestamp, id); no window column. EventOutcome gains failed; pending stays unused until Phase 11. Mapping: ALLOW executed = allowed; ALLOW + MCP failure = failed; Ownership/Policy BLOCK = blocked. version_before/after are copied from the MCP result dict for deploy and rollback only; NULL for reads, restart, blocked and failed. If the dict lacks them for deploy/rollback: store NULL, log a warning (fail-open, #70); a test on the real MCP seam asserts non-null. The writer always sets timestamp explicitly (never server_default) so timestamp and stored flag share one instant. Rejected: stored delta; window/sequence-id columns. Status: field set locked by plan (Sections 10, 16); mapping/NULL rules new.
+
+67. off_hours_flag -- Stored, One Pure Function
+
+The column exists NOT NULL ("computed at write time, stored"). is_off_hours(ts) is pure: fixed UTC+5 (no zoneinfo/tzdata dependency on Windows), working hours 09:00 <= t < 18:00 local, all seven days. Constants live in one module and are FROZEN before Phase 16 (a later change invalidates E2). add_behavior_event() calls it for BOTH live and synthetic rows and stores the result; callers cannot pass the flag. Why: Section 10; one code path prevents live/synthetic drift. Limitations: late-night live testing is flagged off-hours (harmless, live rows are not training data, #65); changing the window later needs one UPDATE recomputing flags from timestamp. Rejected: derive-at-read; zoneinfo; weekend logic. Status: new decision.
+
+68. version_change_delta -- Derived; Normal Deploy = current+1
+
+Not stored: |version_after - version_before| at feature time, NULL treated as 0. deploy_service accepts an arbitrary positive target_version (actions.py); normal deploys use current+1 (Section 13 counter) and a large jump is the anomaly signal. The generator emits only transitions the real mock can produce (no train/serve skew). Phase 13 gate: with large-jump anomalies, check that the feature value moves AND that the Isolation Forest score moves (ablation: score with vs without the feature). Why: [Likely] sklearn IF splits inside the training range, so a value beyond the max isolates no faster than the max; with normal delta in {0,1}, a jump of 50 may score like a normal deploy on that axis. Fallbacks if no lift (Phase 13, not now): jitter normal target to +1..+2, or drop the feature. Status: new decision.
+
+69. Which Live Requests Are Logged (Step 0 item 3, #61)
+
+Log iff the request has an authenticated user and a resolved agent, service and tool (the #57 structural filter). ALLOW executed -> allowed; ALLOW + MCP failure/unavailable -> failed; Ownership/Policy BLOCK -> blocked. Not logged: Authentication BLOCKs, mismatched-claim rows, Tool/Arguments/Service BLOCKs, 409, unexpected 500. Logging never changes a decision (#61); Step 1 BLOCKs stay excluded from E2. Limitations: until Phase 11, #48 approval-bound production-deploy BLOCKs log as blocked (same miscount as #57); Phase 11 remaps them to pending, and pre-Phase-11 live rows of that kind are not training data. Status: permitted by plan (#61); stage set new.
+
+70. Live Write -- Own Commit, After the Outcome, Fail-Open
+
+After the final outcome the pipeline calls add_behavior_event() and commits SEPARATELY from the #58 audit commit. BLOCK: after the audit commit. ALLOW: after the execution_status update, before returning; the 502 path logs failed before raising. Any exception: rollback, warning log, response unchanged. Timestamp is captured at pipeline start; request_id links the row (#75). Why: outcome and versions do not exist pre-MCP; telemetry is not audit evidence (security_requests is), so unlike #58 a write bug must not fail traffic. Limitations: a swallowed failure leaves a window gap (under-detection; a test asserts a failing writer still returns the normal response and logs); one extra INSERT+COMMIT per request, E3 must measure it; the pinned history-query-count test counts only assess_risk queries and is unaffected. Rejected: inside the #58 commit; BackgroundTasks; a test-only disable flag. Status: new decision (extends #35/#58).
+
+71. Generator Path
+
+Direct inserts through the shared add_behavior_event(), not through the Gateway. Why: security_requests.created_at is DB-set, so explicit/past timestamps are impossible via the Gateway; it would also pollute the history S1/S2/S3/#57 read (#56) and mutate mock state. CLI under backend/ml/data/ (Section 28) with --seed, --anchor, --days. A re-run purges source='synthetic' rows of the identities BEING GENERATED, then regenerates, in one transaction; live rows are never touched. Tests share the dev DB (#41, #49): generator tests use throwaway identities/services (make_user pattern) and must never purge the real synthetic set; the CLI targets the four seeded users. Limitation: synthetic events skip Gateway validation; the #72 test compensates. Status: new decision.
+
+72. Identities and Scope
+
+Profiles are keyed by ROLE and the identity's owned (service, environment) rows read from the DB, not by username. Only owned rows (#47), only tools the seeded matrix permits (#46), no production deploy (approval-bound, #48), rollback only when simulated current > known_good. A test asserts every generated action is owned and permitted against the seeded matrix. No new users/services (#8). Limitations: 4 identities, 6 rows; junior and senior_2 own one row each, so "distinct services" is weak (#61); synthetic precision/recall are optimistic (Section 23 limitation applies). Status: new decision.
+
+73. Normal Data Avoids Rule-Catchable Patterns by Construction (Step 0 item 2, #56)
+
+Phase 9 rules read security_requests, never behavior_events, so direct inserts cannot trip them. Spacing is for label hygiene: normal data must not contain named S1/S2/S3/#57 patterns (Section 10 division; E2 split). Rule: any two state-changing actions of one identity are spaced by more than the largest window IMPORTED from risk_constants.py (not copied), with jitter; blocked/failed events are rare and isolated (at most one per identity per interval longer than the #57 window), so S2/#57 cannot arise. Reads may be dense. One test asserts the minimum gap against the imported constant. Rejected: a second in-memory implementation of S1-S3/#57 (drift). Limitation: normal destructive actions look more regular than real usage. Status: new decision.
+
+74. Timestamps, Volume, Version Simulation
+
+Explicit UTC timestamps; --anchor never defaults to "now" (reproducible). Default 30 days; activity inside the #67 working window plus about 3% off-hours events, reads only, never state changes. Target a few thousand events; final volume is a Phase 13 call. Per-service simulated (current, known_good) counters start at (1,1) and follow #9 (deploy: known_good = current, current = target; rollback: current = known_good). A parity test replays one sequence through the real actions.py functions (db, service) on a throwaway service and asserts equal versions. Limitation: the simulator duplicates #9 logic; the parity test is the drift guard. Status: new decision.
+
+75. Migration and Test Impact
+
+ONE migration (revises the current head; Stage 1 confirms with alembic heads): (a) source + CHECK (#65); (b) request_id String(32), nullable, FK -> security_requests.request_id (the Section 16 clarification names request_id as the join key; synthetic rows are NULL); (c) drop and recreate ck_behavior_events_outcome as {allowed, blocked, pending, failed}. No new table (11 stays). Downgrade first deletes failed rows (regenerable telemetry), or restoring the old CHECK fails. Index deferred to Phase 13/14. Test impact: live events FK-reference security_requests, so tests/qa_cleanup.py::delete_requests() deletes behavior_events (same request_id subquery) BEFORE risk_assessments/security_requests (#63 lesson); any raw security_requests delete in a test fails once an event row exists. Status: request_id locked by plan; rest new.
+
+76. Phase 10 Stage 1 -- Implementation Details Left Open by #64-#75
+
+Settled while coding Stage 1; recorded before commit, not before the first line (process slip).
+
+Writer: add_behavior_event(db, *, identity_id, agent_id, service, tool, outcome, timestamp, ...) takes the Service and Tool OBJECTS (environment and tool_id come from them, #66). It does not flush or commit. It raises ValueError on a naive timestamp, and on versions for anything other than an ALLOWED deploy_service/rollback_deployment (#66). Live NULL-versions-with-warning (#66) is the caller's fail-open path (Stage 2), so the writer accepts (None, None) for those tools.
+Generator: ONE per-identity schedule feeds every non-read event (executed, failed, blocked), so the #73 spacing holds across all of them. Per local day: 8-20 reads (~3% off-hours); 0..N state slots (N = 1 junior, 3 senior, 2 admin); each slot is 5% blocked, 1% failed, else executed. Blocked = an Ownership or Policy denial only (not owned, or tool absent from the matrix); owned approval-bound pairs are excluded (Phase 11 makes them pending, not denials). Failed leaves the simulated state unchanged. Tool weights restart 6 / deploy 3 / rollback 1 (rollback only if current > known_good). Reads 55% get_logs / 45% get_metrics.
+RNG: random.Random(f"{seed}:{username}") per identity, so adding an identity never changes another's data. Window = [anchor - days, anchor); local days are UTC+5 midnights (#67). Defaults: --seed 42, --days 30; --anchor is required.
+generate_normal_events(db, *, seed, anchor, days, usernames=None, service_ids=None): service_ids restricts the universe (tests use throwaway services). The simulator starts at (1,1) and never reads the services table.
+Tests: tests/qa_cleanup.py gains delete_behavior_events(); delete_requests() is UNCHANGED in Stage 1 (it gains the live-event delete in Stage 2, #75). A generator test fixture must depend on make_user so it tears down (events, history, services) before the users are deleted.
+Known property (state in report): executed state changes are ~6.6% of events (about 18-39 per identity per 30 days); rollbacks are rare (3 in 30 days). Restart/deploy-frequency features are sparse on normal data. Volume/mix is a Phase 13 call (#74). Status: new decision (implementation detail; no plan change).

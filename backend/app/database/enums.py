@@ -40,6 +40,14 @@ class EventOutcome(str, enum.Enum):
     ALLOWED = "allowed"
     BLOCKED = "blocked"
     PENDING = "pending"
+    FAILED = "failed"  # decisions.md #66/#75: ALLOW whose MCP execution failed
+
+
+class EventSource(str, enum.Enum):
+    """decisions.md #65: provenance marker on behavior_events rows. Training reads
+    'synthetic'; inference windows read 'live' only."""
+    LIVE = "live"
+    SYNTHETIC = "synthetic"
 
 
 class ChangeType(str, enum.Enum):
