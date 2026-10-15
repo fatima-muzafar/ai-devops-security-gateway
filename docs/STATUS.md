@@ -1,8 +1,10 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Current Phase: Phase 9 COMPLETE -- Rule-based risk engine (computed and recorded, NOT enforced).
-Next: Phase 10 (continuous synthetic behavior-event generation). Decisions #1-#63 locked.
+Current Phase: Phase 10 COMPLETE -- behavior-event logging (live hook) + synthetic NORMAL-behavior
+generator. No ML, no enforcement change.
+Next: Phase 11 (human approval workflow, TOCTOU revalidation, Section 11 decision mapping end to end).
+Decisions #1-#77 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -31,27 +33,46 @@ Next: Phase 10 (continuous synthetic behavior-event generation). Decisions #1-#6
   - Stage 2 -- pipeline wiring: Verdict.risk, audit writes security_requests + risk_assessments
     in ONE commit before MCP; tests/qa_cleanup.py; #63
   - Stage 3 -- close-out: real-Gemini smoke verified by DB query; this file
+- Phase 10 -- Behavior-Event Logging and Synthetic Generation
+  - Step 0 -- decisions #64-#75 (scope, source marker, per-action record, off-hours, version
+    delta, which requests are logged, live write, generator path, identities, spacing,
+    timestamps/volume, migration)
+  - Stage 1 -- migration d5b2f8a1c7e3 (source, request_id FK, 'failed'); app/database/behavior.py
+    (is_off_hours + add_behavior_event); ml/data/generator.py; #76
+  - Stage 2 -- gateway/behavior_log.py live hook (fail-open, own commit), pipeline wiring,
+    qa_cleanup.delete_requests() deletes live events; #77
+  - Stage 3 -- close-out: generator run on the dev DB + real-Gemini smoke verified by DB query;
+    this file
 
 ## Current Repo State
-- Last verified commit: `672877f`
+- Last verified commit: `86fc7ad`
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
-- Phase 1 through Phase 9 are complete.
-- Database: "11 tables. Migration a8d41c7e5b92 applied (audit columns on security_requests,
-  no new table -- #32, #39). Phases 8 and 9 added no migration; `policies` already had
-  `requires_approval` (#50) and `risk_assessments` already fit the Phase 9 rows (#58)."
-- Full suite: "261/261 passing after Phase 9 (user-verified): 180 (Phase 1-8) + 63 risk-engine
-  + 18 pipeline-wiring."
-- `docs/decisions.md` has 63 entries (#1-#63; #53-#63 are Phase 9).
+- Phase 1 through Phase 10 are complete.
+- Database: "11 tables. Migration d5b2f8a1c7e3 is the head (Phase 10: behavior_events gains
+  `source` + CHECK, nullable `request_id` FK to security_requests, and 'failed' in the outcome
+  CHECK -- #65, #66, #75). Before it: a8d41c7e5b92 (audit columns on security_requests, #32, #39).
+  Phases 8 and 9 added no migration."
+- Full suite: "327/327 passing after Phase 10 (user-verified): 261 (Phase 1-9) + 27 (writer/schema) + 18 (generator) + 21 (live hook)."
+- `docs/decisions.md` has 77 entries (#1-#77; #64-#77 are Phase 10).
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
 - Phase 8 smoke (real Gemini, real uvicorn): login, chat allow, Policy BLOCK, Ownership
   BLOCK, approval-bound BLOCK (user-verified).
-- Phase 9 smoke (real Gemini, real uvicorn): staging restart LOW, production restart MEDIUM + interim marker (ALLOW), production deploy BLOCK with no risk row (user-verified).
-  result after running the three DB-checked cases (owned staging restart LOW; production restart
-  MEDIUM + "interim: not enforced" yet ALLOW; production deploy BLOCK with no risk row).
+- Phase 9 smoke (real Gemini, real uvicorn): staging restart LOW, production restart MEDIUM +
+  interim marker (ALLOW), production deploy BLOCK with no risk row (user-verified).
+- Phase 10 smoke (user-verified, real Gemini + real uvicorn, checked by DB query): generator on
+  the dev DB (`--seed 42 --anchor 2026-10-11T00:00:00+00:00 --days 30`) inserted 1844 synthetic
+  rows, re-run purged and re-inserted the same count, all invariant checks 0, minimum gap between
+  non-read events above the 10-minute window. Live: 7 events for 7 loggable requests (owned
+  staging read, restart, deploy 1->2, rollback 2->1 = allowed; Ownership BLOCK, Policy BLOCK,
+  approval-bound production-deploy BLOCK = blocked); versions only on deploy/rollback and equal to
+  service_state_history; the no-token Gateway call was audited but NOT logged; loggable requests =
+  live events; synthetic total unchanged; the stored off_hours_flag agreed with an independent
+  SQL re-computation of the UTC+5 rule (all smoke rows were off-hours: the in-hours live branch
+  is covered by unit tests and the synthetic rows only).
 
 ## INTERIM STATE (Phase 9 -> Phase 11) -- read before trusting any result
 Risk is COMPUTED AND RECORDED, NOT ENFORCED until Phase 11. Every request that passes the Step 1
@@ -63,7 +84,57 @@ notification-service production. Production deploy is NOT affected: it is an app
 fail-closed BLOCK (#48) and gets NO risk row (it stops at Policy, before risk).
 - Exclude "interim: not enforced" rows from E5 and Approval Routing Accuracy, or regenerate
   them after Phase 11 (#58). Rows before Phase 14 carry "ml=stub" and are excluded from E2 (#59).
+- Phase 10 addition (#69): until Phase 11, an approval-bound production-deploy BLOCK is logged in
+  behavior_events as outcome=blocked (Phase 11 remaps it to pending). Live rows of that kind
+  written before Phase 11 are not training data. `pending` exists in the CHECK but is unused.
 - Do not read Phase 9-10 results for production state changes as final.
+
+## Phase 10 Summary (complete)
+Two writers, ONE write path: `app.database.behavior.add_behavior_event()` (no flush/commit) is
+used by the live hook and the generator, so the stored `off_hours_flag` and the NULL-version rules
+cannot drift. It requires a timezone-aware timestamp and raises on versions for anything other
+than an ALLOWED deploy_service/rollback_deployment (#66, #76). `is_off_hours(ts)`: fixed UTC+5,
+09:00 <= t < 18:00, all seven days; constants FROZEN before Phase 16 (#67).
+- Schema (#65, #66, #75): `source` {live, synthetic} NOT NULL default 'live' + CHECK;
+  `request_id` String(32) nullable FK -> security_requests (NULL for synthetic); outcome CHECK is
+  {allowed, blocked, pending, failed}. Downgrade deletes 'failed' rows first. No index yet.
+  The N = 5 window is a QUERY (last 5 rows per identity_id by (timestamp, id)); no window column;
+  `version_change_delta` and the window are derived, nothing derived is stored (#66, #68).
+- Live hook (`gateway/behavior_log.py`, #69, #70, #77): logged iff user, agent, tool, service and
+  environment all resolved (= ALLOW executed/failed, plus Ownership/Policy BLOCKs). ALLOW executed
+  -> allowed; ALLOW + MCP failure -> failed (written before the 502); BLOCK -> blocked. NOT logged:
+  Authentication, mismatched-claim, Agent/Tool/Arguments/Service BLOCKs, 409, 422, unexpected 500.
+  Written AFTER the audit commit and after MCP, in its OWN commit, FAIL-OPEN (rollback + warning,
+  response unchanged). Versions are copied from `result["result"]` for an executed deploy/rollback
+  only (both ints, else NULL + warning). Event timestamp = pipeline start. ~2 ms median locally.
+- Generator (`ml/data/generator.py`, #64, #71-#74): NORMAL behavior only, on demand, deterministic
+  (`--seed`, required `--anchor`, `--days`; per-identity RNG). Direct inserts, source='synthetic',
+  agent AG001. Seeded users act only on rows they own with tools the matrix permits without
+  approval; no production deploy; normal deploy = current+1; rollback only when current >
+  known_good; ~3% off-hours reads, never off-hours state changes. Every non-read event comes from
+  one schedule spaced by MORE than the largest Phase 9 window (imported from risk_constants).
+  A re-run purges only the generated identities' synthetic rows; live rows are never touched.
+- Tests: `tests/test_behavior_events.py` (27), `tests/test_behavior_generator.py` (18),
+  `tests/test_behavior_live_hook.py` (21). `tests/qa_cleanup.py::delete_requests()` now deletes
+  live events first (request_id subquery); `delete_behavior_events()` removes synthetic rows. A
+  generator test fixture must depend on `make_user` so it tears down before the users are deleted.
+  Mutation checks (16 + a migration downgrade for Stage 1, 12 for Stage 2) were all caught; the
+  scripts are not part of the repo.
+- Known limitations (state in report): the normal profile numbers are mine and UNCALIBRATED, so
+  synthetic precision/recall are optimistic (Section 23); only 4 identities / 6 rows (junior and
+  senior_2 own one row each, "distinct services" is weak, #61/#72); executed state changes are only
+  ~6.6% of generated events (18-39 per identity per 30 days) and rollbacks are rare (3 in 30
+  days), so restart/deploy-frequency features are sparse on normal data; normal destructive actions
+  look more regular than real usage (#73); synthetic events skip Gateway validation (#71, covered
+  by the #72 test); the generator reads "continuous" loosely (#64); fail-open means a swallowed
+  write leaves a hole in that identity's window (under-detection, #70); "timestamp at pipeline
+  start" cannot be told apart from "at the hook" by a test (#77); late-night live testing is
+  flagged off-hours (#67); the planning doc still says the window is per (identity, service,
+  environment): #55 supersedes it and the final report MUST say so.
+- Process notes: decisions #76 and #77 were recorded alongside the code, before commit, not before
+  the first line (a deviation from the standing rule). Pre-existing test leak: unauthenticated
+  BLOCK rows (`QA-R-auth...`, `QA-W-x...`, no user or service) are not removed by any teardown;
+  harmless, but do not count rows in the dev DB expecting zero.
 
 ## Phase 9 Summary (complete)
 `gateway/risk.py::assess_risk()` is pure and read-only; `evaluate()` calls it only after every
@@ -167,31 +238,45 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
 ## Open items
 - Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool
   calls after a tool result are ignored). Resolve before Phase 16/17.
-- The interim production ALLOW closes in Phase 11, when the decision mapping consumes
-  final_risk_level (Section 11 Step 4). Phase 11 Step 0 must decide: whether `risk_level` appears
-  in the response (only on APPROVAL_REQUIRED, or not at all, #60); who approves an admin's own
-  production request (admin owns two production rows, #47); how the #48 approval-bound BLOCK
-  becomes APPROVAL_REQUIRED and feeds `requires_approval=True` into assess_risk (#63).
-- Phase 10 Step 0 must fix: the per-action record for the per-identity N = 5 window (#55); how the
-  synthetic generator avoids tripping S3/#57 on every identity (distinct identities, spacing or
-  explicit timestamps, #56); whether blocked attempts are logged with outcome=blocked (#61).
-- Phase 15: do not designate production rollback as a BLOCK-class "irreversible" action (#54).
-- Phase 16: rewrite Demo 7 per #61 (one identity alternating across its two owned rows plus a
-  separate denied attempt on a third service).
-- Full suite takes ~30 s locally (was ~8 s before Phase 8 Stage 2). Likely argon2 hashing in
-  `make_user` (two users per test in the new files); not diagnosed. Optional:
-  `pytest tests -q --durations=8`.
+- Phase 11 Step 0 must decide: the interim production ALLOW closes when the decision mapping
+  consumes final_risk_level (Section 11 Step 4): whether `risk_level` appears in the response (only
+  on APPROVAL_REQUIRED, or not at all, #60); who approves an admin's own production request (admin
+  owns two production rows, #47); how the #48 approval-bound BLOCK becomes APPROVAL_REQUIRED and
+  feeds `requires_approval=True` into assess_risk (#63). Phase 10 adds: what behavior_events row(s)
+  an APPROVAL_REQUIRED request writes (outcome `pending` exists but is unused, #66, #69), what an
+  approved-then-executed or rejected request logs, and that the #69 interim `blocked` rows for
+  approval-bound deploys are remapped and excluded from training.
+- Phase 13 (dataset/features): training reads source='synthetic', inference windows read
+  source='live' only (#65). Anomaly/staged categories, labels and sequence ids are Phase 13's
+  (#64): this needs a `scenario`/label column or a side file, i.e. another migration. Apply the #68
+  gate: with large-jump anomalies check that the version feature value moves AND that the Isolation
+  Forest score moves (ablation with vs without the feature); fallbacks are jitter on the normal
 
-## Next Task -- Phase 10
-Continuous synthetic behavior-event generation (Section 27 Phase 10; Section 16 `behavior_events`;
-Section 23). Log, from Semester 1 on, the fields needed later so no backfill is required: identity,
-service, environment, tool, timestamp, outcome, plus what `version_change_delta` (integer
-versions, Section 13) and `off_hours_flag` need. Phase 10 adds NO ML. Before coding: read Planning
-Sections 10, 13, 16, 23, 24 and decisions #7, #55, #56, #61; resolve the Phase 10 Step 0 items in
-Open items; write new decisions.md entries BEFORE code.
+  deploy target or dropping the feature. Decide volume and the state-change/rollback mix (sparse,
+  see Phase 10 limitations). Decide whether a (user_id, timestamp) index is needed (#75).
+- Phase 14: a live window shorter than N = 5 may be incomplete because the hook is fail-open
+  (#70); decide how the model treats short windows.
+- Phase 15: do not designate production rollback as a BLOCK-class "irreversible" action (#54).
+- Phase 16: FREEZE `gateway/risk_constants.py` AND the `app/database/behavior.py` working-hours
+  constants (#67) -- a later change invalidates E2. Rewrite Demo 7 per #61 (one identity
+  alternating across its two owned rows plus a separate denied attempt on a third service).
+- E3 (latency) must measure the Phase 9 history queries (reads 0, restart/deploy 3, rollback 4)
+  AND the Phase 10 hook (two reloads + one INSERT + one COMMIT per logged request, #70, #77).
+- Full suite takes ~55-60 s locally (was ~8 s before Phase 8 Stage 2). Likely argon2 hashing in
+  `make_user`; not diagnosed. Optional: `pytest tests -q --durations=8`.
+
+## Next Task -- Phase 11
+Human approval workflow (Section 27 Phase 11; Sections 11, 14): approval queue, approve/reject,
+TOCTOU-style revalidation immediately before MCP execution, and the Section 11 Step 4 decision
+mapping implemented end to end (`ml_risk_level` stays a LOW stub until Phase 14, #59). Before
+coding: read Planning Sections 11, 14, 17 and decisions #47, #48, #53, #54, #58, #59, #60, #63,
+#69; resolve the Phase 11 Step 0 items in Open items; write new decisions.md entries BEFORE code
+(this time actually before the first line, see the Phase 10 process notes). Phase 11 changes
+existing tests on purpose (the #48 approval-bound BLOCK becomes APPROVAL_REQUIRED, as #34 did).
 
 ## Important
-- Follow Planning Revision 6 and `docs/decisions.md` (63 entries).
-- Do not reorder, remove, or add phases. Do not redo Phase 1-9 unless asked.
+- Follow Planning Revision 6 and `docs/decisions.md` (77 entries).
+- Do not reorder, remove, or add phases. Do not redo Phase 1-10 unless asked.
 - Anything genuinely undecided mid-implementation gets a new decisions.md
   entry BEFORE code, not after.
+  
