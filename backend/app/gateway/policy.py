@@ -5,9 +5,9 @@ REPLACES the Phase 5 placeholder. Role x tool x environment lookup in `policies`
 (no service_id: ownership is a separate stage). Default-deny: only allowed=True rows
 count and no matching row means BLOCK. The role is the one read from the users row.
 
-A matching row with requires_approval set is a fail-closed BLOCK until Phase 11 turns
-it into APPROVAL_REQUIRED (#48). If several allowed rows match and any requires
-approval, the approval-bound BLOCK wins.
+Phase 11 (#78): a matching row with requires_approval set is PERMITTED but approval-bound;
+evaluate_policy() reports the flag and the decision engine turns it into APPROVAL_REQUIRED.
+If several allowed rows match and any requires approval, the flag is True (fail closed).
 """
 from dataclasses import dataclass
 
@@ -57,18 +57,3 @@ def evaluate_policy(
     if not rows:
         return PolicyResult(_not_permitted(role, tool_name, environment), False)
     return PolicyResult(None, any(row.requires_approval for row in rows))
-
-
-def check_policy(db: Session, role: Role, tool_name: str, environment: Environment) -> str | None:
-    """Return a BLOCK reason, or None when the action is permitted without approval.
-    Phase 8 behaviour, kept until Stage 2 of Phase 11 switches the pipeline to
-    evaluate_policy() (#78)."""
-    rows = _permit_rows(db, role, tool_name, environment)
-    if not rows:
-        return _not_permitted(role, tool_name, environment)
-    if any(row.requires_approval for row in rows):
-        return (
-            f"Policy stage: {_q(tool_name)} in '{environment.value}' requires human approval; "
-            "the approval workflow is not implemented yet (Phase 11). Request blocked."
-        )
-    return None

@@ -6,7 +6,7 @@ routers. No route logic lives here.
 """
 from fastapi import FastAPI
 
-from app.api import auth, chat, gateway, mcp
+from app.api import approvals, auth, chat, gateway, mcp
 
 app = FastAPI(title="Security Gateway FYP")
 
@@ -14,3 +14,4 @@ app.include_router(gateway.router)
 app.include_router(chat.router)
 app.include_router(mcp.router)
 app.include_router(auth.router)
+app.include_router(approvals.router)

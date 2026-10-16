@@ -16,7 +16,8 @@ test session's identity map.
 from fastapi.testclient import TestClient
 
 from app.database.enums import ChangeType, Decision, ExecutionStatus
-from app.database.models import SecurityRequest, ServiceStateHistory
+from app.database.models import ApprovalRequest, SecurityRequest, ServiceStateHistory
+from app.gateway.decision import APPROVAL_REASON
 from app.main import app
 
 client = TestClient(app)
@@ -64,11 +65,12 @@ def test_restart_service_staging_allows_and_records_history(db, test_service, au
     assert _history_count(db, test_service.id, ChangeType.RESTART) == before + 1
 
 
-def test_deploy_service_production_blocks_pending_approval_before_mcp(
+def test_deploy_service_production_requires_approval_before_mcp(
     db, test_service, test_service_production, auth_headers
 ):
-    """production deploy (owner, role permitted, approval flag) -> fail-closed Policy
-    BLOCK -> MCP never called -> no history row (Section 5/11, decisions.md #48)."""
+    """production deploy (owner, role permitted, approval flag) -> APPROVAL_REQUIRED ->
+    MCP never called -> no history row, version unchanged, a pending approval row
+    (Section 5/11, decisions.md #78, #80; replaces the Phase 8 #48 fail-closed BLOCK)."""
     before = _history_count(db, test_service_production.id)
 
     response = client.post(
@@ -82,10 +84,18 @@ def test_deploy_service_production_blocks_pending_approval_before_mcp(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["decision"] == "BLOCK"
-    assert "requires human approval" in body["reason"]
-    assert "result" not in body
+    assert body["decision"] == "APPROVAL_REQUIRED"
+    assert body["reason"] == APPROVAL_REASON
+    assert set(body) == {"request_id", "decision", "reason"}
     assert _history_count(db, test_service_production.id) == before
+    db.expire_all()
+    assert test_service_production.current_version == 1  # mock state untouched
+    row = _audit_row(db, "REQ-TEST-002")
+    assert row.decision == Decision.APPROVAL_REQUIRED
+    assert row.execution_status == ExecutionStatus.NOT_EXECUTED
+    approval = db.query(ApprovalRequest).filter_by(request_id="REQ-TEST-002").one()
+    assert approval.status.value == "pending"
+    assert approval.state_snapshot == {"current_version": 1, "known_good_version": 1}
 
 
 def test_unknown_tool_is_blocked_and_audited(db, test_service, auth_headers):

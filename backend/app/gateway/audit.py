@@ -1,8 +1,8 @@
 """
-Audit persistence (decisions.md #35, #36, #41, #58): exactly ONE security_requests
-INSERT per request and, for requests that passed every Step 1 stage, ONE
-risk_assessments INSERT -- both in the SAME commit, BEFORE any MCP call; then, on ALLOW
-only, one UPDATE of execution_status.
+Audit persistence (decisions.md #35, #36, #41, #58, #80): exactly ONE security_requests
+INSERT per request, for requests that passed every Step 1 stage ONE risk_assessments
+INSERT, and for APPROVAL_REQUIRED ONE approval_requests INSERT -- all in the SAME commit,
+BEFORE any MCP call; then, on ALLOW only, one UPDATE of execution_status.
 
 A failed risk write rolls the audit row back too (HTTP 500, MCP not called, no trace of
 the request). Accepted limitation (#58): it fails closed.
@@ -10,9 +10,9 @@ the request). Accepted limitation (#58): it fails closed.
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database.enums import Decision, ExecutionStatus, RiskLevel
+from app.approvals.service import create_pending
+from app.database.enums import Decision, ExecutionStatus
 from app.database.models import RiskAssessment, SecurityRequest
-from app.gateway.risk import MARKER_INTERIM_NOT_ENFORCED
 
 
 class DuplicateRequestError(Exception):
@@ -20,12 +20,10 @@ class DuplicateRequestError(Exception):
 
 
 def _build_risk_row(req, verdict) -> RiskAssessment:
-    """#58: decision = the ENACTED decision (ALLOW in Phase 9). Final MEDIUM/HIGH is
-    recorded but not enforced until Phase 11, so the row says so."""
+    """#58/#78: decision = the ENACTED decision. Since Phase 11 risk is enforced, so the
+    "interim: not enforced" marker is no longer written (old rows keep it)."""
     risk = verdict.risk
     reasons = list(risk.reasons)
-    if verdict.decision is Decision.ALLOW and risk.final_risk_level is not RiskLevel.LOW:
-        reasons.append(MARKER_INTERIM_NOT_ENFORCED)
     return RiskAssessment(
         request_id=req.request_id,
         rule_risk_level=risk.rule_risk_level,
@@ -56,6 +54,8 @@ def record_decision(db: Session, req, verdict) -> None:
     try:
         if verdict.risk is not None:
             db.add(_build_risk_row(req, verdict))
+        if verdict.decision is Decision.APPROVAL_REQUIRED:
+            create_pending(db, req.request_id, verdict.state_snapshot)
         db.commit()
     except IntegrityError:
         db.rollback()

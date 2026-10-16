@@ -16,8 +16,9 @@ from app.database.base import SessionLocal
 from app.database.behavior import is_off_hours
 from app.database.enums import Environment, EventOutcome, EventSource, Role
 from app.database.models import (
-    Agent, BehaviorEvent, SecurityRequest, Service, ServiceStateHistory, Tool,
+    Agent, ApprovalRequest, BehaviorEvent, SecurityRequest, Service, ServiceStateHistory, Tool,
 )
+from app.gateway.decision import APPROVAL_REASON
 from app.gateway.mcp_client import McpResponse, McpUnavailableError, get_mcp_client
 from app.main import app
 from qa_cleanup import delete_requests
@@ -102,6 +103,10 @@ class World:
     def tool_name(self, ev):
         return self.db.get(Tool, ev.tool_id).tool_name
 
+    def approval_id(self, rid):
+        self.db.rollback()
+        return self.db.query(ApprovalRequest).filter_by(request_id=rid).one().id
+
 
 @pytest.fixture
 def w(db, make_user, ag001_agent, auth_headers):
@@ -160,13 +165,25 @@ def test_restart_is_logged_with_null_versions(w, caplog):
     assert not hook_records(caplog)
 
 
-def test_deploy_and_rollback_copy_versions_from_the_real_mcp_result(w, caplog):
+def test_deploy_and_rollback_copy_versions_from_the_real_mcp_result(w, caplog, make_user):
+    # Phase 11: a rollback right after a deploy trips rule S1 (#53) -> APPROVAL_REQUIRED. The
+    # rollback is approved by an admin; its ONE event row goes pending -> allowed with versions (#85).
+    make_user("qa_lh_admin", Role.ADMIN)
     with caplog.at_level(logging.WARNING, logger=HOOK_LOGGER):
         rid1, r1 = w.post("deploy_service", extra={"target_version": 2})
         rid2, r2 = w.post("rollback_deployment")
+        assert r2.json()["decision"] == "APPROVAL_REQUIRED"
+        pending = w.event(rid2)
+        assert pending.outcome == EventOutcome.PENDING
+        assert (pending.version_before, pending.version_after) == (None, None)
+        approved = w.client.post(
+            f"/api/approvals/{w.approval_id(rid2)}/approve", json={"reason": "ok"},
+            headers=w._headers("qa_lh_admin"),
+        )
+        assert approved.status_code == 200 and approved.json()["outcome"] == "executed"
         rid3, r3 = w.post("deploy_service", extra={"target_version": 9})  # a large jump
-    assert [r.json()["decision"] for r in (r1, r2, r3)] == ["ALLOW"] * 3
-    e1, e2, e3 = w.event(rid1), w.event(rid2), w.event(rid3)
+    assert [r.json()["decision"] for r in (r1, r3)] == ["ALLOW"] * 2
+    e1, e2, e3 = w.event(rid1), w.event(rid2), w.event(rid3)  # still one row per request
     assert (w.tool_name(e1), e1.version_before, e1.version_after) == ("deploy_service", 1, 2)
     assert (w.tool_name(e2), e2.version_before, e2.version_after) == ("rollback_deployment", 2, 1)
     assert (e3.version_before, e3.version_after) == (1, 9)
@@ -188,7 +205,7 @@ def test_missing_versions_in_the_mcp_result_store_null_and_warn(w, caplog):
     assert any("lacks integer version" in r.getMessage() for r in hook_records(caplog))
 
 
-# ---- BLOCK: Ownership / Policy / interim approval-bound ----------------------------------
+# ---- BLOCK: Ownership / Policy; PENDING: approval-bound ----------------------------------
 def test_ownership_block_is_logged_as_blocked(w):
     rid, resp = w.post("restart_service", svc=SVC, who=JUNIOR)  # SVC belongs to the senior
     assert resp.json()["decision"] == "BLOCK"
@@ -206,12 +223,15 @@ def test_policy_block_is_logged_as_blocked(w):
     assert ev.outcome == EventOutcome.BLOCKED and ev.service_id == w.ids["jstg"]
 
 
-def test_interim_approval_bound_production_deploy_logs_blocked(w):
+def test_approval_bound_production_deploy_logs_pending(w):
+    """#85: since Phase 11 an approval-bound deploy is APPROVAL_REQUIRED and logs `pending`
+    (the interim `blocked` row of #69 is gone)."""
     rid, resp = w.post("deploy_service", env="production", extra={"target_version": 2})
-    assert resp.json()["decision"] == "BLOCK"
-    assert "requires human approval" in w.request_row(rid).reason
+    assert resp.json()["decision"] == "APPROVAL_REQUIRED"
+    assert w.request_row(rid).reason == APPROVAL_REASON
     ev = w.event(rid)
-    assert ev.outcome == EventOutcome.BLOCKED and ev.environment == PRODUCTION
+    assert ev.outcome == EventOutcome.PENDING and ev.environment == PRODUCTION
+    assert (ev.version_before, ev.version_after) == (None, None)
 
 
 # ---- ALLOW + MCP failure -----------------------------------------------------------------

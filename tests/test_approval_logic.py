@@ -28,7 +28,7 @@ from app.database.models import (
 )
 from app.gateway.behavior_log import record_behavior_event, resolve_pending_event
 from app.gateway.decision import decide_from_risk
-from app.gateway.policy import check_policy, evaluate_policy
+from app.gateway.policy import evaluate_policy
 from app.gateway.revalidation import RevalidationResult, revalidate_approval, take_snapshot
 from app.gateway.risk import COND_S1, COND_S3, assess_risk
 from qa_cleanup import delete_requests
@@ -152,12 +152,6 @@ def test_policy_senior_production_restart_is_permitted_without_flag(db):
 def test_policy_denied_pair_has_a_reason_and_no_flag(db):
     result = evaluate_policy(db, Role.JUNIOR_DEVELOPER, "deploy_service", STAGING)
     assert "Policy stage" in result.block_reason and result.requires_approval is False
-
-
-def test_check_policy_still_behaves_as_in_phase_8(db):
-    assert check_policy(db, Role.SENIOR_DEVELOPER, "restart_service", STAGING) is None
-    assert "requires human approval" in check_policy(
-        db, Role.SENIOR_DEVELOPER, "deploy_service", PRODUCTION)
 
 
 # ---------------------------------------------------------------- #84 revalidation

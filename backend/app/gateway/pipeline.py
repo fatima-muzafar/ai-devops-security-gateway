@@ -9,13 +9,17 @@ the outcome.
 
 Phase 9: after every Step 1 stage passes, evaluate() computes rule risk (gateway/risk.py,
 decisions.md #53-#59, #62; read-only) and the Verdict carries it; the audit module writes
-it with the audit row in ONE commit (#58). Risk is RECORDED, NOT ENFORCED: the decision is
-still ALLOW for any final level until Phase 11.
+it with the audit row in ONE commit (#58).
+
+Phase 11 (#78-#80, #89): the decision is now ENFORCED. decide_from_risk() maps the final risk
+and the policy approval flag (Section 11 Step 4): LOW -> ALLOW, otherwise APPROVAL_REQUIRED.
+APPROVAL_REQUIRED writes the audit, risk and approval rows in ONE commit and a `pending`
+behavior event, and never calls MCP. Approval and execution live in app/approvals/.
 
 Phase 10: after the final outcome (and after the audit commit) a behavior_events row is written
 by gateway/behavior_log.py in its OWN commit, fail-open (decisions.md #69, #70).
 
-Not here (still deferred): ML, approval/TOCTOU.
+Not here (still deferred): ML.
 """
 import logging
 from dataclasses import dataclass, field
@@ -25,12 +29,15 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.database.enums import Decision, Environment, EventOutcome, ExecutionStatus
+from app.database.models import Service
 from app.gateway import audit
 from app.gateway.behavior_log import record_behavior_event
 from app.gateway.identity import resolve_identity
 from app.gateway.mcp_client import McpUnavailableError
 from app.gateway.ownership import check_ownership
-from app.gateway.policy import check_policy
+from app.gateway.decision import APPROVAL_REASON, decide_from_risk
+from app.gateway.policy import evaluate_policy
+from app.gateway.revalidation import take_snapshot
 from app.gateway.risk import RiskEvaluation, assess_risk
 from app.gateway.validation import check_arguments, check_tool_registry, resolve_service
 
@@ -62,6 +69,8 @@ class Verdict:
     service_id: int | None = None
     environment: Environment | None = None
     risk: RiskEvaluation | None = None  # set only for requests that passed every Step 1 stage
+    requires_approval: bool = False  # the policy flag (#78)
+    state_snapshot: dict | None = None  # set only when APPROVAL_REQUIRED (#80, #81)
 
 
 def evaluate(db: Session, req: GatewayRequest) -> Verdict:
@@ -92,12 +101,11 @@ def evaluate(db: Session, req: GatewayRequest) -> Verdict:
     if ownership_reason:
         return Verdict(Decision.BLOCK, ownership_reason, **resolved)
 
-    policy_reason = check_policy(db, ident.user.role, req.tool, args.environment)
-    if policy_reason:
-        return Verdict(Decision.BLOCK, policy_reason, **resolved)
+    policy = evaluate_policy(db, ident.user.role, req.tool, args.environment)
+    if policy.block_reason:
+        return Verdict(Decision.BLOCK, policy.block_reason, **resolved)
 
-    # Every Step 1 stage passed: compute risk (read-only). requires_approval is False here
-    # because an approval-bound policy row already BLOCKed above (#48); Phase 11 will feed it.
+    # Every Step 1 stage passed: compute risk (read-only), then map it to a decision (#78).
     risk = assess_risk(
         db,
         user_id=ident.user.id,
@@ -105,9 +113,16 @@ def evaluate(db: Session, req: GatewayRequest) -> Verdict:
         sensitivity=tool.sensitivity,
         environment=args.environment,
         service_id=service.service_id,
-        requires_approval=False,
+        requires_approval=policy.requires_approval,
     )
-    return Verdict(Decision.ALLOW, None, risk=risk, **resolved)
+    decision = decide_from_risk(risk.final_risk_level, policy.requires_approval)
+    if decision is Decision.APPROVAL_REQUIRED:
+        snapshot = take_snapshot(db.get(Service, service.service_id))
+        return Verdict(
+            decision, APPROVAL_REASON, risk=risk, requires_approval=policy.requires_approval,
+            state_snapshot=snapshot, **resolved,
+        )
+    return Verdict(decision, None, risk=risk, requires_approval=policy.requires_approval, **resolved)
 
 
 def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[str, Any]:
@@ -125,6 +140,18 @@ def handle_tool_request(db: Session, mcp_client, req: GatewayRequest) -> dict[st
         return {
             "request_id": req.request_id,
             "decision": Decision.BLOCK.value,
+            "reason": verdict.reason,
+        }
+
+    if verdict.decision is Decision.APPROVAL_REQUIRED:
+        # #80: audit + risk + approval rows are already committed; no MCP call. The event is
+        # `pending` and is resolved later by the approvals router (#85).
+        record_behavior_event(
+            db, verdict, request_id=req.request_id, timestamp=started_at, outcome=EventOutcome.PENDING
+        )
+        return {
+            "request_id": req.request_id,
+            "decision": Decision.APPROVAL_REQUIRED.value,
             "reason": verdict.reason,
         }
 

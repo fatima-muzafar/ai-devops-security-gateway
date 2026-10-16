@@ -978,3 +978,26 @@ Written as outcome=pending at request time (fail-open, own commit, #70). On reso
 
 ## 87. Agent and Chat
 No agent or chat code change. The existing relay returns "The Security Gateway returned APPROVAL_REQUIRED: <reason>" with no second LLM call (#23, #27). Only tests are added. Limitation: the developer is not told when the admin decides (no requester endpoint, #83). Status: locked by #23, #27.
+
+## 88. Phase 11 Stage 1 -- Implementation Details Left Open by #78-#86
+Settled while coding Stage 1 (commit 2c30142); written down here before Stage 2 code (the #76/#77 process slip, corrected).
+1. `check_policy` stays next to `evaluate_policy` in Stage 1; Stage 2 switches the pipeline and deletes it. Both share one lookup helper, so Phase 8 behaviour did not change in Stage 1.
+2. `approvals.service.decide()` checks in this order: admin -> exists -> reason (reject only) -> self-approval (approve only) -> ONE atomic UPDATE ... WHERE status='pending'. Zero rows -> rollback + AlreadyDecidedError.
+3. `decide()` COMMITS the human decision at once. Revalidation runs after that commit, so a crash cannot lose the decision (the approval is a fact; execution is a separate step).
+4. `revalidate_approval()` also refuses an approval that is not `approved` and a request whose execution_status is not `not_executed` (defence in depth: rejected, pending, replayed). It never raises; failures are BLOCK reasons.
+5. Revalidation reasons are prefixed "Revalidation stage: " and nest the stage reason (e.g. "Revalidation stage: Ownership stage: user 'x' ...").
+6. `resolve_pending_event()` raises ValueError for a non-final outcome (a caller bug); every other problem is fail-open (rollback + warning, #70).
+7. Test helpers: `delete_approvals()` in qa_cleanup; `delete_requests()` deletes approvals by request_id first; `make_user` teardown deletes approvals REVIEWED by its users (reviewer_id FK) before deleting them.
+Status: new decision (implementation detail; no plan change).
+
+## 89. Phase 11 Stage 2 -- Wiring Details Left Open by #78-#87
+Written BEFORE the Stage 2 code.
+- Pipeline: evaluate() uses `evaluate_policy`; a policy deny is a BLOCK (as before). Then assess_risk(requires_approval=policy.requires_approval) and `decide_from_risk(final, flag)`. Verdict gains `requires_approval` and `state_snapshot` (take_snapshot of the resolved service, only when APPROVAL_REQUIRED). `check_policy` is deleted. The generic reason text is the constant `APPROVAL_REASON` in gateway/decision.py (#79).
+- Audit: record_decision adds the approval row (create_pending) in the SAME commit as security_requests and risk_assessments (#80). The interim marker is no longer appended (the constant stays in risk.py for old rows and old tests). The risk row's decision = the enacted decision. APPROVAL_REQUIRED writes a `pending` behavior event (existing hook, own commit, fail-open); no MCP call, response {request_id, decision, reason}.
+- Router app/api/approvals.py (sync def, #26/#37), thin; logic in app/approvals/ (service.py from Stage 1, new execution.py). `require_admin`: 401 generic (as chat), 403 {"detail": "Forbidden."} for non-admin; the role is read from the DB.
+- GET /api/approvals?status=pending|approved|rejected (default pending, oldest first, no pagination: limitation). Each item: id, request_id, status, created_at, decided_at, reviewer, reason, revalidation, requester, agent, service_name, environment, tool, arguments, and risk {rule, ml, final, reasons} (admin-only view, #79).
+- POST approve/reject body {"reason": str|null} (optional). Errors: 404 unknown id, 422 reject without reason, 403 self-approval, 409 already decided, 502 MCP failure (#34).
+- Approve responses (200): executed -> {approval_id, request_id, approval_status: "approved", outcome: "executed", result}; revalidation failed -> {..., outcome: "revalidation_failed", reason} and the pending event becomes `blocked`; reject -> {..., approval_status: "rejected", outcome: "rejected"} and the event becomes `blocked`. MCP runs only after the revalidation result is stored and committed (#35); executed/failed then updates execution_status and resolves the event (#85).
+- Known limitation: a crash between the approve commit and the MCP call leaves the request approved + not_executed and there is no retry endpoint. A second approve returns 409, so nothing can run twice.
+- Agent and chat: no change (the relay already prints any non-ALLOW decision, #23, #27).
+Status: new decision (implementation detail; no plan change).

@@ -7,6 +7,12 @@ production rollback must never be one of them (#54).
 """
 from app.database.enums import Decision, RiskLevel
 
+# #79: generic on purpose. No risk level, no condition ids (a manipulated agent must not read
+# the scoring boundary, #60).
+APPROVAL_REASON = (
+    "Approval stage: this action requires human approval; the request is pending review."
+)
+
 
 def decide_from_risk(final_risk: RiskLevel, requires_approval: bool) -> Decision:
     """Policy-mandated approval wins; then LOW -> ALLOW, MEDIUM/HIGH -> APPROVAL_REQUIRED."""

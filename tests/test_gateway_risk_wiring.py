@@ -1,8 +1,9 @@
 """
 Phase 9 Stage 2: risk wired into the pipeline and persisted (decisions.md #58, #59, #60).
 
-Drives the REAL Gateway. Risk is RECORDED, NOT ENFORCED until Phase 11: the decision is
-ALLOW for any final level. Request ids start with QA-W-.
+Drives the REAL Gateway. Phase 11 (#78): risk is ENFORCED: LOW -> ALLOW, MEDIUM/HIGH ->
+APPROVAL_REQUIRED (the audit, risk and approval rows are written in one commit, #80).
+Request ids start with QA-W-.
 """
 import uuid
 
@@ -11,13 +12,18 @@ from fastapi.testclient import TestClient
 
 from app.database.base import SessionLocal
 from app.database.enums import Decision, Environment, ExecutionStatus, RiskLevel, Role
-from app.database.models import RiskAssessment, SecurityRequest, Service, ServiceStateHistory
+from app.database.models import (
+    ApprovalRequest, RiskAssessment, SecurityRequest, Service, ServiceStateHistory,
+)
 from app.gateway import audit
 from app.gateway.auth import issue_token
+from app.gateway.decision import APPROVAL_REASON
 from app.gateway.mcp_client import McpResponse, get_mcp_client
 from app.gateway.pipeline import GatewayRequest, evaluate
 from app.gateway.risk import (
+    COND_PRODUCTION_HIGH,
     COND_REPEATED_DENIALS,
+    COND_REQUIRES_APPROVAL,
     COND_S2,
     MARKER_INTERIM_NOT_ENFORCED,
     MARKER_ML_STUB,
@@ -55,6 +61,10 @@ class World:
     def risk_rows(self, rid):
         self.db.rollback()
         return self.db.query(RiskAssessment).filter_by(request_id=rid).all()
+
+    def approval_rows(self, rid):
+        self.db.rollback()
+        return self.db.query(ApprovalRequest).filter_by(request_id=rid).all()
 
     def risk(self, rid):
         rows = self.risk_rows(rid)
@@ -128,35 +138,42 @@ def test_owned_staging_restart_is_low_without_the_interim_marker(w):
     assert MARKER_INTERIM_NOT_ENFORCED not in r.reasons
 
 
-def test_production_restart_is_medium_recorded_but_still_allowed(w):
+def test_production_restart_is_medium_and_now_requires_approval(w):
     rid, resp = w.post("restart_service", env="production")
-    assert resp.status_code == 200 and resp.json()["decision"] == "ALLOW"  # NOT enforced yet
+    assert resp.status_code == 200 and resp.json()["decision"] == "APPROVAL_REQUIRED"  # enforced (#78)
     r = w.risk(rid)
     assert (r.rule_risk_level, r.final_risk_level) == (MEDIUM, MEDIUM)
-    assert r.decision is Decision.ALLOW and r.is_production is True
-    assert r.reasons == ["production_targeting:medium", MARKER_ML_STUB, MARKER_INTERIM_NOT_ENFORCED]
-    assert w.request_row(rid).execution_status is ExecutionStatus.EXECUTED
+    assert r.decision is Decision.APPROVAL_REQUIRED and r.is_production is True
+    assert r.reasons == ["production_targeting:medium", MARKER_ML_STUB]  # no interim marker (#78)
+    row = w.request_row(rid)
+    assert row.decision is Decision.APPROVAL_REQUIRED
+    assert row.execution_status is ExecutionStatus.NOT_EXECUTED
+    (approval,) = w.approval_rows(rid)
+    assert approval.status.value == "pending"
 
 
 def test_production_rollback_is_high_because_the_registry_sensitivity_reaches_the_engine(w):
-    app.dependency_overrides[get_mcp_client] = lambda: FakeMcp()  # mock rollback semantics not under test
+    fake = FakeMcp()
+    app.dependency_overrides[get_mcp_client] = lambda: fake
     rid, resp = w.post("rollback_deployment", env="production")
-    assert resp.json()["decision"] == "ALLOW"
+    assert resp.json()["decision"] == "APPROVAL_REQUIRED" and fake.calls == 0
     r = w.risk(rid)
     assert (r.rule_risk_level, r.final_risk_level) == (HIGH, HIGH)
     assert r.reasons[0] == "production_targeting:high"
+    assert r.decision is Decision.APPROVAL_REQUIRED
 
 
-def test_s2_burst_is_high_end_to_end_and_still_allowed(w):
+def test_s2_burst_is_high_end_to_end_and_requires_approval(w):
     for i in range(3):  # admin is not the owner of the junior's service: Ownership BLOCKs
         _, blocked = w.post("get_logs", svc=OTHER_SVC, tag=f"d{i}")
         assert blocked.json()["decision"] == "BLOCK"
     rid, resp = w.post("restart_service")
-    assert resp.json()["decision"] == "ALLOW"
+    assert resp.json()["decision"] == "APPROVAL_REQUIRED"
     r = w.risk(rid)
-    assert r.final_risk_level is HIGH
+    assert r.final_risk_level is HIGH and r.decision is Decision.APPROVAL_REQUIRED
     assert COND_S2 in r.reasons and COND_REPEATED_DENIALS in r.reasons
-    assert r.reasons[-1] == MARKER_INTERIM_NOT_ENFORCED
+    assert r.reasons[-1] == MARKER_ML_STUB and MARKER_INTERIM_NOT_ENFORCED not in r.reasons
+    assert len(w.approval_rows(rid)) == 1
 
 
 # --------------------------------------------------------------------------- BLOCK: no risk row
@@ -164,7 +181,7 @@ def test_s2_burst_is_high_end_to_end_and_still_allowed(w):
 
 @pytest.mark.parametrize(
     "case",
-    ["tool", "arguments", "service", "auth", "ownership", "policy", "approval_bound"],
+    ["tool", "arguments", "service", "auth", "ownership", "policy"],
 )
 def test_no_risk_row_for_any_block(w, case):
     if case == "tool":
@@ -177,14 +194,23 @@ def test_no_risk_row_for_any_block(w, case):
         rid, resp = w.post("get_logs", headers={})
     elif case == "ownership":
         rid, resp = w.post("get_logs", svc=OTHER_SVC)
-    elif case == "policy":  # junior owns it but may not deploy
+    else:  # "policy": junior owns it but may not deploy
         rid, resp = w.post("deploy_service", svc=OTHER_SVC, who=JUNIOR, extra={"target_version": 2})
-    else:  # #48: approval-bound production deploy stops at Policy, before risk
-        rid, resp = w.post("deploy_service", env="production", extra={"target_version": 2})
-        assert "requires human approval" in resp.json()["reason"]
     assert resp.status_code == 200 and resp.json()["decision"] == "BLOCK"
     assert w.request_row(rid).decision is Decision.BLOCK  # audit row still written
     assert w.risk_rows(rid) == []
+    assert w.approval_rows(rid) == []  # a BLOCK never creates an approval (#80)
+
+
+def test_approval_bound_production_deploy_now_gets_a_high_risk_row_and_an_approval_row(w):
+    """#78: the old #48 BLOCK is gone. The policy flag is permitted, scored HIGH, and routed."""
+    rid, resp = w.post("deploy_service", env="production", extra={"target_version": 2})
+    assert resp.status_code == 200 and resp.json()["decision"] == "APPROVAL_REQUIRED"
+    r = w.risk(rid)
+    assert (r.rule_risk_level, r.final_risk_level) == (HIGH, HIGH)
+    assert COND_REQUIRES_APPROVAL in r.reasons and COND_PRODUCTION_HIGH in r.reasons
+    assert r.decision is Decision.APPROVAL_REQUIRED
+    assert len(w.approval_rows(rid)) == 1
 
 
 # --------------------------------------------------------------------------- contract (#60)
@@ -193,8 +219,12 @@ def test_no_risk_row_for_any_block(w, case):
 def test_response_key_sets_are_unchanged(w):
     _, ok = w.post("get_logs")
     _, blocked = w.post("get_logs", svc=OTHER_SVC)
+    _, pending = w.post("restart_service", env="production")
     assert set(ok.json()) == {"request_id", "decision", "result"}
     assert set(blocked.json()) == {"request_id", "decision", "reason"}
+    # #79: APPROVAL_REQUIRED has the BLOCK shape; no risk_level, no scores, generic reason.
+    assert set(pending.json()) == {"request_id", "decision", "reason"}
+    assert pending.json()["reason"] == APPROVAL_REASON
 
 
 # --------------------------------------------------------------------------- write order (#58)

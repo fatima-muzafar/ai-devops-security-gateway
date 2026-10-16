@@ -15,11 +15,14 @@ from sqlalchemy import or_
 from app.database.base import SessionLocal
 from app.database.enums import Decision, Environment, ExecutionStatus, Role
 from qa_cleanup import delete_requests
-from app.database.models import Policy, SecurityRequest, Service, ServiceStateHistory, Tool, User
+from app.database.models import (
+    ApprovalRequest, Policy, SecurityRequest, Service, ServiceStateHistory, Tool, User,
+)
 from app.database.seed import SEED_POLICIES
 from app.gateway.auth import issue_token
 from app.gateway.mcp_client import McpResponse, get_mcp_client
-from app.gateway.policy import check_policy
+from app.gateway.decision import APPROVAL_REASON
+from app.gateway.policy import evaluate_policy
 from app.main import app
 
 client = TestClient(app)
@@ -185,19 +188,25 @@ def test_policy_matrix(world, ag001_agent, db, role, tool, env, idx):
         )
         assert stub.calls == []
         assert row.execution_status == ExecutionStatus.NOT_EXECUTED
-    elif SEED_POLICIES[key]:  # approval-bound: fail-closed BLOCK until Phase 11 (#48)
-        assert body["decision"] == "BLOCK"
-        assert body["reason"] == (
-            f"Policy stage: '{tool}' in '{env.value}' requires human approval; the approval "
-            "workflow is not implemented yet (Phase 11). Request blocked."
-        )
+    elif SEED_POLICIES[key] or (
+        env is Environment.PRODUCTION
+        and tool in ("restart_service", "rollback_deployment", "deploy_service")
+    ):
+        # Phase 11 (#78): an approval-bound permit row, or a production state change (rule risk
+        # MEDIUM/HIGH, #53), is APPROVAL_REQUIRED: no MCP call, a pending approval row.
+        assert body["decision"] == "APPROVAL_REQUIRED"
+        assert body["reason"] == APPROVAL_REASON
         assert stub.calls == []
+        assert row.decision == Decision.APPROVAL_REQUIRED
         assert row.execution_status == ExecutionStatus.NOT_EXECUTED
-    else:  # INTERIM (#48): includes owned production restart/rollback until Phase 9/11
+        approval = db.query(ApprovalRequest).filter_by(request_id=rid).one()
+        assert approval.status.value == "pending"
+    else:  # reads in any environment, and owned staging state changes: LOW risk -> ALLOW
         assert body["decision"] == "ALLOW"
         assert len(stub.calls) == 1
         assert row.decision == Decision.ALLOW
         assert row.execution_status == ExecutionStatus.EXECUTED
+        assert db.query(ApprovalRequest).filter_by(request_id=rid).count() == 0
 
 
 # ------------------------------------------------------------- ownership (#47)
@@ -287,7 +296,7 @@ def test_role_is_read_from_the_database_on_every_request(world, ag001_agent, db)
     assert len(stub.calls) == 1
 
 
-# ------------------------------------------------------ check_policy edge cases
+# ------------------------------------------------------ evaluate_policy edge cases
 def _tool_id(db, name):
     return db.query(Tool).filter_by(tool_name=name).one().id
 
@@ -305,13 +314,14 @@ def test_conflicting_duplicate_policy_rows_fail_closed(db):
     db.commit()
     dup_id = dup.id
     try:
-        reason = check_policy(db, Role.JUNIOR_DEVELOPER, "get_logs", Environment.STAGING)
+        result = evaluate_policy(db, Role.JUNIOR_DEVELOPER, "get_logs", Environment.STAGING)
     finally:
         db.rollback()
         db.query(Policy).filter_by(id=dup_id).delete()
         db.commit()
 
-    assert reason is not None and "requires human approval" in reason
+    # Still permitted by the normal row, but ANY approval-bound row makes it approval-bound.
+    assert result.block_reason is None and result.requires_approval is True
 
 
 def test_allowed_false_rows_never_permit(db):
@@ -327,10 +337,11 @@ def test_allowed_false_rows_never_permit(db):
     db.commit()
     stray_id = stray.id
     try:
-        reason = check_policy(db, Role.JUNIOR_DEVELOPER, "rollback_deployment", Environment.STAGING)
+        result = evaluate_policy(db, Role.JUNIOR_DEVELOPER, "rollback_deployment", Environment.STAGING)
     finally:
         db.rollback()
         db.query(Policy).filter_by(id=stray_id).delete()
         db.commit()
 
-    assert reason is not None and "is not permitted" in reason
+    assert result.block_reason is not None and "is not permitted" in result.block_reason
+    assert result.requires_approval is False

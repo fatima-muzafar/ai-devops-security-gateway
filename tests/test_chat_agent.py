@@ -108,10 +108,10 @@ def test_restart_staging_is_allowed_and_changes_state(db, test_service, make_cha
     assert history_count(db, test_service.id, "restart") == before + 1
 
 
-def test_deploy_production_is_blocked_and_reason_relayed_verbatim(
+def test_deploy_production_needs_approval_and_reason_relayed_verbatim(
     db, test_service, test_service_production, make_chat, auth_headers
 ):
-    # Only ONE scripted message: a second LLM call on a BLOCK would raise.
+    # Only ONE scripted message: a second LLM call on a non-ALLOW decision would raise (#27).
     client, _ = make_chat(
         [
             tool_call_msg(
@@ -129,7 +129,7 @@ def test_deploy_production_is_blocked_and_reason_relayed_verbatim(
 
     assert res.status_code == 200
     body = res.json()
-    assert body["decision"] == "BLOCK"
+    assert body["decision"] == "APPROVAL_REQUIRED"  # Phase 11 (#78, #87): relayed, not blocked
     # Replay the same request at the Gateway under a NEW request_id (a reused id
     # is a 409, #36) and require its reason verbatim.
     replay = dict(body["tool_request"], request_id=uuid.uuid4().hex)
@@ -137,7 +137,7 @@ def test_deploy_production_is_blocked_and_reason_relayed_verbatim(
         TestClient(app).post("/api/gateway/tool-request", json=replay, headers=headers).json()["reason"]
     )
     assert "requires human approval" in expected
-    assert expected in body["reply"]
+    assert body["reply"] == f"The Security Gateway returned APPROVAL_REQUIRED: {expected}"
     assert history_count(db, test_service_production.id) == before
 
 
