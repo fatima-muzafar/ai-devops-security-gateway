@@ -118,7 +118,8 @@ def _executed_count(
             SecurityRequest.user_id == user_id,
             SecurityRequest.service_id == service_id,
             Tool.tool_name == tool_name,
-            SecurityRequest.decision == Decision.ALLOW,
+            # #86: executed means execution_status only. An approved request keeps
+            # decision=APPROVAL_REQUIRED (#80) and must still count for S1/S3.
             SecurityRequest.execution_status == ExecutionStatus.EXECUTED,
             SecurityRequest.created_at >= since,
         )

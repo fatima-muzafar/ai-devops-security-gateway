@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.database.behavior import VERSION_TOOLS, add_behavior_event
 from app.database.enums import EventOutcome, EventSource
-from app.database.models import Service, Tool
+from app.database.models import BehaviorEvent, Service, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -101,3 +101,42 @@ def record_behavior_event(
     except Exception:  # fail-open (#70): telemetry must never change a response
         db.rollback()
         logger.warning("behavior event write failed for %s; response unchanged.", request_id, exc_info=True)
+
+
+_RESOLVED_OUTCOMES = frozenset({EventOutcome.ALLOWED, EventOutcome.FAILED, EventOutcome.BLOCKED})
+
+
+def resolve_pending_event(
+    db: Session, request_id: str, outcome: EventOutcome, *, result: Any = None
+) -> None:
+    """#85: update the ONE live `pending` row of a request to its final outcome. ALLOWED copies
+    deploy/rollback versions from `result` (as the live hook does, #66); FAILED and BLOCKED
+    store NULL versions. The timestamp is not touched. Fail-open (#70): a missing row or any
+    write error only logs a warning. An invalid `outcome` is a caller bug and raises."""
+    if outcome not in _RESOLVED_OUTCOMES:
+        raise ValueError(f"resolve_pending_event: {outcome!r} is not a final outcome.")
+    try:
+        event = (
+            db.query(BehaviorEvent)
+            .filter(
+                BehaviorEvent.request_id == request_id,
+                BehaviorEvent.source == EventSource.LIVE,
+                BehaviorEvent.outcome == EventOutcome.PENDING,
+            )
+            .order_by(BehaviorEvent.id)
+            .first()
+        )
+        if event is None:
+            logger.warning("no pending behavior event to resolve for %s (#85).", request_id)
+            return
+        before, after = (None, None)
+        if outcome == EventOutcome.ALLOWED:
+            tool = db.get(Tool, event.tool_id)
+            before, after = _versions(tool.tool_name, result, request_id)
+        event.outcome = outcome
+        event.version_before = before
+        event.version_after = after
+        db.commit()
+    except Exception:  # fail-open (#70)
+        db.rollback()
+        logger.warning("pending behavior event update failed for %s.", request_id, exc_info=True)

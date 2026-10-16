@@ -31,8 +31,10 @@ from sqlalchemy import or_
 
 from app.database.base import SessionLocal
 from app.database.enums import Environment, Role
-from qa_cleanup import delete_requests
-from app.database.models import Agent, SecurityRequest, Service, ServiceStateHistory, User
+from qa_cleanup import delete_approvals, delete_requests
+from app.database.models import (
+    Agent, ApprovalRequest, SecurityRequest, Service, ServiceStateHistory, User,
+)
 from app.database.seed import seed_policies
 from app.gateway.auth import hash_password, issue_token
 from app.gateway.mcp_client import McpClient, get_mcp_client
@@ -105,6 +107,8 @@ def make_user(db):
     db.rollback()
     ids = [u.id for u in db.query(User).filter(User.username.in_(created)).all()]
     if ids:
+        # Phase 11 (#81): approvals REVIEWED by these users belong to other users' requests.
+        delete_approvals(db, ApprovalRequest.reviewer_id.in_(ids))
         delete_requests(db, SecurityRequest.user_id.in_(ids))
         db.query(User).filter(User.id.in_(ids)).delete(synchronize_session=False)
         db.commit()

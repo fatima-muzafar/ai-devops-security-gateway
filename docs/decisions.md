@@ -944,3 +944,37 @@ Fail-open (#70): the whole body is wrapped; on any exception: rollback, one warn
 tests/qa_cleanup.py::delete_requests() now deletes behavior_events by the same request_id subquery BEFORE risk_assessments and security_requests (#75). Synthetic rows (request_id NULL) are not reachable through it; they go through delete_behavior_events() (#76).
 Response contract and Phase 9 behaviour are unchanged; the history-query-count test is unaffected.
 Known unkillable property (state in report): "timestamp captured at pipeline start" cannot be distinguished from "captured at the hook" by a test; both fall inside the request's wall-clock bounds. Status: new decision (implementation detail; no plan change).
+
+<!-- APPEND to docs/decisions.md, after #77. Written BEFORE code (standing rule). -->
+
+## Phase 11 Decisions -- Approval Workflow, TOCTOU Revalidation, Decision Mapping
+
+## 78. Decision Mapping; Retires the #48 BLOCK
+New `policy.evaluate_policy()` returns PolicyResult(block_reason, requires_approval). An approval-bound permit row is no longer a BLOCK. evaluate() passes requires_approval to assess_risk (HIGH, #53, #63). A pure `decide_from_risk(final_risk, requires_approval)` implements Section 11 Step 4: flag -> APPROVAL_REQUIRED; LOW -> ALLOW; MEDIUM/HIGH -> APPROVAL_REQUIRED. No BLOCK-class rows until Phase 15 (#54: production rollback must never become BLOCK-class). The marker "interim: not enforced" is no longer written; old rows keep it and stay excluded from E5/Approval Routing (#58). Production deploy now gets a risk row. Limitations: every production state change now needs a human; ml_risk_level is still the LOW stub (#59). Status: locked by plan (Section 11); details new.
+
+## 79. Response Contract (resolves #60)
+APPROVAL_REQUIRED returns {request_id, decision, reason}, the same shape as BLOCK. Reason is generic: "Approval stage: this action requires human approval; the request is pending review." No risk level, no condition ids, no `risk_level` field in any Gateway response. Why: #60 still holds (a manipulated agent must not read the scoring boundary). The admin sees risk only in GET /api/approvals. Limitation: Section 17's example (with risk_level) stays different; the report says so. Status: new decision.
+
+## 80. What APPROVAL_REQUIRED Writes
+ONE commit, before any MCP call: security_requests (decision=APPROVAL_REQUIRED, execution_status=not_executed), risk_assessments (decision=APPROVAL_REQUIRED), approval_requests (pending + state_snapshot, #81). Any failure rolls back all three: HTTP 500, no MCP, fail closed (as #58). security_requests.decision is NEVER changed later: the final outcome is read from approval status + revalidation + execution_status. Why: Approval Routing Accuracy needs the original decision. Limitation: a bug here fails every approval-bound request. Status: new decision (extends #35, #58).
+
+## 81. One Migration on approval_requests
+Rename approved_at -> decided_at (set on approve AND reject). Add UNIQUE(request_id). Add state_snapshot JSON NOT NULL ({current_version, known_good_version} at request time). Add revalidation Text NULL (NULL = not run; "passed" or the BLOCK reason). No new table (11 stays). Checked by grep: approved_at is used only by the model and migration 0b6eff3ade85; no code or test uses it or ApprovalRequest, so the rename is safe. Downgrade reverses all four. Rejected: reusing approved_at for rejections (the name would lie). Status: new decision.
+
+## 82. Who Approves
+Admin only (role read from the DB, #44). Reviewer must not be the requester (no self-approval). An admin MAY reject their own request. Why: separation of duties; Section 9 gives approval management to admin. KNOWN LIMITATION: the seeded admin cannot get approval for its own production restart/rollback (only one admin, #8). The final report MUST state this. No second admin is seeded. Tests use a throwaway second admin (make_user). Demo 4 is unaffected (senior_developer_1 requests, admin approves). Rejected: allowing self-approval; seeding a second admin. Status: new decision.
+
+## 83. Endpoints
+GET /api/approvals?status= (default pending; admin only; shows request, user, agent, service, env, tool, risk, reasons, Section 14). POST /api/approvals/{id}/approve and /reject; {id} is approval_requests.id. Reject needs a non-empty reason; approve reason optional. The decision is ONE atomic UPDATE ... WHERE status='pending'; zero rows -> 409 (double approve). 401 no/invalid token, 403 non-admin, 404 unknown id. Approve runs revalidation + MCP in the same call (sync def, #26, #37). New router app/api/approvals.py; logic in app/approvals/. Cut (state in report): expiry, a requester status endpoint, notifications. Status: locked by plan (Section 17); details new.
+
+## 84. TOCTOU Revalidation -- Exactly What Is Re-Checked
+Runs only for an approved request still pending execution (execution_status=not_executed). It re-checks, from the stored request: requester exists and agent active (DB lookup); tool registered and enabled; stored arguments pass the schema; service row exists; ownership holds; policy still permits; snapshot (current_version, known_good_version) unchanged for all three state-changing tools. Risk is NOT recomputed (Sections 8, 14). RULE: policy requires_approval=True counts as SATISFIED (the human already approved); revalidation never returns APPROVAL_REQUIRED, so there is no approval loop. Fail -> BLOCK, no MCP, approval stays `approved`, revalidation=reason, execution_status stays not_executed. Pass -> revalidation="passed", MCP, executed or failed (502, #34). Tests: flag still set -> executes; a rejected (or already decided) request never runs revalidation. Limits: the requester's token is not stored (#44, #51), so "re-authenticate" = re-look-up; the approver is freshly authenticated at approve time. Fails closed on any state change (strict for restart). Rejected: integrity hash, re-escalate (re-block only). Status: locked by plan; details new.
+
+## 85. behavior_events: One Row per Request
+Written as outcome=pending at request time (fail-open, own commit, #70). On resolution the SAME row is updated: executed -> allowed + versions; MCP failed -> failed; rejected or revalidation-blocked -> blocked. Timestamp stays the request time. Why: several rows would count one action twice in the N = 5 window; leaving it pending would hide version_change_delta on every production deploy. Fail-open: a missing row only logs a warning. Interim #69 `blocked` rows from before Phase 11 stay and are not training data. KNOWN GAP: a pending row that is never approved or rejected stays pending forever. Phase 13 must decide how windows treat old pending rows (STATUS Open items). Status: new decision (extends #66, #69, #70).
+
+## 86. Amend #56: "Executed"
+"Executed" means execution_status=EXECUTED, whatever the decision. S1 and S3 use this, so approved executions count (they were invisible because they filtered decision=ALLOW). S2 and #57 are unchanged; approved-then-failed and revalidation-blocked requests do not feed them (limitation). risk_constants.py is untouched. Status: new decision (amends #56).
+
+## 87. Agent and Chat
+No agent or chat code change. The existing relay returns "The Security Gateway returned APPROVAL_REQUIRED: <reason>" with no second LLM call (#23, #27). Only tests are added. Limitation: the developer is not told when the admin decides (no requester endpoint, #83). Status: locked by #23, #27.
