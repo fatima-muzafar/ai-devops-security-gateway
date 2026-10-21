@@ -1,10 +1,10 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Current Phase: Phase 10 COMPLETE -- behavior-event logging (live hook) + synthetic NORMAL-behavior
-generator. No ML, no enforcement change.
-Next: Phase 11 (human approval workflow, TOCTOU revalidation, Section 11 decision mapping end to end).
-Decisions #1-#77 locked.
+Current Phase: Phase 11 COMPLETE -- human approval workflow, TOCTOU-style revalidation and the
+Section 11 Step 4 decision mapping, enforced end to end. No ML, no frontend.
+Next: Phase 12 (security dashboard v1).
+Decisions #1-#89 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -43,20 +43,34 @@ Decisions #1-#77 locked.
     qa_cleanup.delete_requests() deletes live events; #77
   - Stage 3 -- close-out: generator run on the dev DB + real-Gemini smoke verified by DB query;
     this file
+- Phase 11 -- Human Approval Workflow, TOCTOU Revalidation, Decision Mapping
+  - Step 0 -- decisions #78-#87 (approved with 5 changes: self-approval limitation text, grep of
+    approved_at before the rename, no-approval-loop rule + tests, pending-row note, test list
+    re-verified against the real code)
+  - Stage 1 -- migration e7c1a4b9d2f6, gateway/decision.py, policy.evaluate_policy(),
+    gateway/revalidation.py, approvals/service.py, resolve_pending_event(), #86 fix in risk.py;
+    #88; commit `2c30142`
+  - Stage 2 -- wiring: pipeline + audit enforce the decision, api/approvals.py,
+    approvals/execution.py, check_policy removed; 16 existing tests + 1 of Stage 1 edited, 26 new
+    tests; #89; commit `d936b95`
+  - Stage 3 -- close-out: smoke (real uvicorn; direct AND real-Gemini chat mode) verified by DB
+    query; this file
 
 ## Current Repo State
-- Last verified commit: `86fc7ad`
+- Last verified commit: `d936b95` (Phase 11 Stage 2, the last code commit; Stage 1 is `2c30142`)
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
-- Phase 1 through Phase 10 are complete.
-- Database: "11 tables. Migration d5b2f8a1c7e3 is the head (Phase 10: behavior_events gains
-  `source` + CHECK, nullable `request_id` FK to security_requests, and 'failed' in the outcome
-  CHECK -- #65, #66, #75). Before it: a8d41c7e5b92 (audit columns on security_requests, #32, #39).
-  Phases 8 and 9 added no migration."
-- Full suite: "327/327 passing after Phase 10 (user-verified): 261 (Phase 1-9) + 27 (writer/schema) + 18 (generator) + 21 (live hook)."
-- `docs/decisions.md` has 77 entries (#1-#77; #64-#77 are Phase 10).
+- Phase 1 through Phase 11 are complete.
+- Database: 11 tables. Migration e7c1a4b9d2f6 is the head (Phase 11: approval_requests renames
+  approved_at -> decided_at, adds UNIQUE(request_id), state_snapshot JSON NOT NULL and
+  revalidation Text NULL -- #81). Before it: d5b2f8a1c7e3 (Phase 10, #65, #66, #75), a8d41c7e5b92
+  (audit columns, #32, #39). Phases 8 and 9 added no migration; Phase 11 Stage 2 added none.
+- Full suite: 420/420 passing after Phase 11 (user-verified): 327 (Phase 1-10) + 68 (Stage 1,
+  tests/test_approval_logic.py) + 25 net (Stage 2: 26 new in tests/test_approval_flow.py + 1 new
+  in test_gateway_risk_wiring.py, minus 1 removed Stage 1 test and 1 removed parametrize case).
+- `docs/decisions.md` has 89 entries (#1-#89; #78-#89 are Phase 11).
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
 - Phase 8 smoke (real Gemini, real uvicorn): login, chat allow, Policy BLOCK, Ownership
@@ -74,20 +88,104 @@ this field tracks the last code-verified commit, not literal HEAD."
   SQL re-computation of the UTC+5 rule (all smoke rows were off-hours: the in-hours live branch
   is covered by unit tests and the synthetic rows only).
 
-## INTERIM STATE (Phase 9 -> Phase 11) -- read before trusting any result
-Risk is COMPUTED AND RECORDED, NOT ENFORCED until Phase 11. Every request that passes the Step 1
-stages gets a `risk_assessments` row, but the decision is still ALLOW for any final level
-(#58). Concretely: senior_developer and admin production restart and rollback on rows they own
-are ALLOW with final MEDIUM/HIGH and the marker "interim: not enforced" in `reasons`. Admin
-owns auth-service and payment-service production; senior_developer_1 owns
-notification-service production. Production deploy is NOT affected: it is an approval-bound
-fail-closed BLOCK (#48) and gets NO risk row (it stops at Policy, before risk).
-- Exclude "interim: not enforced" rows from E5 and Approval Routing Accuracy, or regenerate
-  them after Phase 11 (#58). Rows before Phase 14 carry "ml=stub" and are excluded from E2 (#59).
-- Phase 10 addition (#69): until Phase 11, an approval-bound production-deploy BLOCK is logged in
-  behavior_events as outcome=blocked (Phase 11 remaps it to pending). Live rows of that kind
-  written before Phase 11 are not training data. `pending` exists in the CHECK but is unused.
-- Do not read Phase 9-10 results for production state changes as final.
+- Phase 11 smoke (user-verified, real uvicorn, checked by DB query via the UNTRACKED
+  `phase11_smoke/{smoke.py,run_sql.py,report.sql}`, a Python driver, not PowerShell): `--mode direct`
+  37/37 checks and `--mode chat` (real Gemini picked the right tool every time) 37/37. Covered:
+  owned staging restart still ALLOW; production deploy -> APPROVAL_REQUIRED with nothing run,
+  pending approval + snapshot + HIGH risk row + one `pending` event; admin listing with risk
+  (senior 403, no token 401); admin approve -> revalidation `passed` -> MCP -> version 1->2 /
+  2->3 with known_good = old current (#9), decision stays APPROVAL_REQUIRED + executed, the same
+  event row resolved to `allowed` with versions, second approve 409; production restart rejected
+  (revalidation NULL, no restart row, event `blocked`, approve-after-reject 409); TOCTOU (version
+  bumped in the DB between request and approval) -> `revalidation_failed` naming the field, no MCP
+  call, event `blocked`; admin self-approval 403, self-reject OK. report.sql tables agreed.
+
+## INTERIM STATE (Phase 9 -> Phase 11) -- CLOSED in Phase 11; read before trusting OLD rows
+Risk is now ENFORCED (#78): LOW -> ALLOW, MEDIUM/HIGH or a policy approval flag -> APPROVAL_REQUIRED.
+Senior/admin production restart and rollback are no longer ALLOW; production deploy is no longer a
+fail-closed BLOCK (#48 is retired). What still matters for evaluation data:
+- Rows written in Phase 9-10 with the marker "interim: not enforced" (decision=ALLOW although final
+  risk was MEDIUM/HIGH) are NOT valid for E5 or Approval Routing Accuracy: exclude them or regenerate
+  (#58). New rows never carry the marker.
+- Phase 9-10 results for production state changes are superseded; do not read them as final.
+- Live behavior_events written before Phase 11 for approval-bound deploys are `blocked` (#69);
+  they are not training data. Since Phase 11 such a request logs `pending` and is resolved later (#85).
+- ml_risk_level is STILL a fixed LOW stub with the marker "ml=stub" until Phase 14 (#59): rows before
+  Phase 14 are excluded from E2.
+
+## Phase 11 Summary (complete)
+Decision mapping (#78): `gateway/decision.py::decide_from_risk()` is pure: policy flag -> APPROVAL_REQUIRED;
+LOW -> ALLOW; MEDIUM/HIGH -> APPROVAL_REQUIRED. There is NO BLOCK-class yet (Phase 15 decides). A policy
+DENY is still a Step 1 BLOCK. `policy.evaluate_policy()` returns PolicyResult(block_reason,
+requires_approval); `check_policy` is deleted. `assess_risk(requires_approval=...)` gets the real flag.
+- APPROVAL_REQUIRED (#79, #80): response {request_id, decision, reason} with the generic reason
+  "Approval stage: this action requires human approval; the request is pending review." No
+  `risk_level` anywhere in a Gateway response. ONE commit writes security_requests
+  (APPROVAL_REQUIRED, not_executed), risk_assessments (decision APPROVAL_REQUIRED, no interim marker)
+  and approval_requests (pending + state_snapshot {current_version, known_good_version}); a failure
+  rolls all three back (HTTP 500, no MCP). MCP is never called. A `pending` behavior event is
+  written (own commit, fail-open). security_requests.decision is NEVER rewritten later.
+- Endpoints (#83, app/api/approvals.py, sync def, admin only, role read from the DB): GET
+  /api/approvals?status=pending|approved|rejected (oldest first; request, requester, agent, service,
+  env, tool, arguments, reviewer, reason, revalidation, risk); POST /api/approvals/{id}/approve and
+  /reject (reject needs a reason). 401 / 403 / 404 / 409 (already decided) / 422 / 502 (MCP failure).
+- Decision logic (#82, app/approvals/service.py): admin only; reviewer must not be the requester
+  (self-approval 403; an admin MAY reject their own request); ONE atomic UPDATE ... WHERE
+  status='pending' so a double approve is 409; the human decision is committed BEFORE revalidation.
+- Revalidation (#84, gateway/revalidation.py, read-only, only after an approval): requester and
+  agent re-looked-up in the DB (the token is not stored), tool registered+enabled, stored arguments,
+  service row, ownership, policy still permits, and the version snapshot unchanged (both fields, all
+  three state-changing tools). policy requires_approval=True counts as SATISFIED (no approval loop).
+  Risk is not recomputed. Fail -> BLOCK-style result (approval stays `approved`, revalidation holds the
+  reason, execution_status stays not_executed, MCP not called). Pass -> "passed", MCP, then
+  executed/failed (failed -> HTTP 502). Responses (#89): outcome executed | revalidation_failed |
+  rejected.
+- behavior_events (#85): ONE row per request: `pending` at request time, updated in place to allowed
+  (+versions for deploy/rollback) / failed / blocked (rejected or revalidation-failed); timestamp
+  stays the request time. `resolve_pending_event()` is fail-open.
+- #86: "executed" in the S1/S3 history means execution_status=EXECUTED whatever the decision, so
+  approved executions count (they were invisible because they filtered decision=ALLOW).
+- Migration e7c1a4b9d2f6 (#81); round trip, an upgrade with an existing row (decided_at kept,
+  state_snapshot '{}') and two migration mutants were checked in the sandbox.
+- Tests: tests/test_approval_logic.py (68, Stage 1: decide, evaluate_policy, every revalidation
+  check, approvals service, pending-event update, #86) and tests/test_approval_flow.py (26, Stage 2:
+  Demo 4 end to end over HTTP and the real MCP seam, reject, TOCTOU for version/ownership/policy,
+  401/403/404/409/422, self-approval, MCP 500 and unavailable -> 502, one-commit rollback, duplicate
+  request_id, listing order and filters, #86 end to end, the policy flag alone forcing approval).
+  Helpers: qa_cleanup.delete_approvals(); delete_requests() deletes approvals first; make_user
+  teardown deletes approvals it REVIEWED (reviewer_id FK).
+- Existing tests changed on purpose, list approved before editing (red-first run showed 14 behaviour
+  reds + 2 direct check_policy callers, exactly as predicted): test_gateway_policy (matrix x6 and 2
+  edge cases), test_gateway_risk_wiring (4), test_gateway_tool_request (1), test_chat_agent (1),
+  test_behavior_live_hook (2) and one Stage 1 test removed.
+- Mutation checks (sandbox, all killed): Stage 1 33 code mutants + 2 migration mutants; Stage 2 34
+  mutants (pipeline, audit, execution, router, main). Scripts are not part of the repo.
+- Known limitations (state in the final report):
+  - The seeded admin CANNOT get approval for its own production restart/rollback (only one admin,
+    #8, #82); it can only reject them. The report MUST say so.
+  - "Re-authenticate the requester" is a DB re-lookup: the requester token is not stored (#44, #51);
+    only the approver is freshly authenticated at approve time (#84).
+  - Revalidation fails closed on ANY version change, strict even for a restart (#84).
+  - No approval expiry, no requester status endpoint, no notifications, no pagination on GET
+    (#83). A pending approval stays pending forever (#85).
+  - A crash between the approve commit and the MCP call leaves the request approved +
+    not_executed; there is no retry endpoint (a replay is 409, so nothing can run twice, #89).
+  - Approved-then-failed and revalidation-blocked requests do not feed S2 or #57 (#86).
+  - A staging rollback soon after a staging deploy now needs an admin (rule S1 = MEDIUM, #53): plan
+    demos and smoke tests for it.
+  - Section 17's example (risk_level in the response) differs: #79. Section 28's `gateway/` and
+    `approvals/` layout is flat (#38, #88).
+  - Fail-open pending write (#85): a swallowed write leaves no row to resolve (a warning only).
+  - The planning doc still says the window is per (identity, service, environment): #55 supersedes
+    it and the final report MUST say so.
+  - Full suite ~90-135 s (argon2 hashing in `make_user`, not diagnosed).
+- Process notes: #88 (Stage 1 implementation details) was written AFTER the Stage 1 code but before any
+  Stage 2 code (a third slip of the standing rule, after #76/#77); #89 was written before its code.
+  During Stage 1 the mutation harness left one file mutated in the working tree once (caught by
+  diffing a backup, restored before the patch was built); after that it ran on a throwaway copy. The
+  smoke driver is Python (`phase11_smoke/`, UNTRACKED like `phase10_smoke/`) because PowerShell could
+  not be run in the sandbox. The sandbox smoke dry-run was skipped on purpose (usage limit); the first
+  real run was the user's and passed.
 
 ## Phase 10 Summary (complete)
 Two writers, ONE write path: `app.database.behavior.add_behavior_event()` (no flush/commit) is
@@ -236,47 +334,56 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
   in Phase 8.
 
 ## Open items
-- Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool
-  calls after a tool result are ignored). Resolve before Phase 16/17.
-- Phase 11 Step 0 must decide: the interim production ALLOW closes when the decision mapping
-  consumes final_risk_level (Section 11 Step 4): whether `risk_level` appears in the response (only
-  on APPROVAL_REQUIRED, or not at all, #60); who approves an admin's own production request (admin
-  owns two production rows, #47); how the #48 approval-bound BLOCK becomes APPROVAL_REQUIRED and
-  feeds `requires_approval=True` into assess_risk (#63). Phase 10 adds: what behavior_events row(s)
-  an APPROVAL_REQUIRED request writes (outcome `pending` exists but is unused, #66, #69), what an
-  approved-then-executed or rejected request logs, and that the #69 interim `blocked` rows for
-  approval-bound deploys are remapped and excluded from training.
+- Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool calls after a
+  tool result are ignored). Resolve before Phase 16/17.
+- Phase 12 Step 0 must decide (suggestions, not decisions): what "dashboard v1" is. Section 17 lists
+  GET /api/security/events and GET /api/mock/services; NEITHER exists yet (built routes: /api/auth/login,
+  /api/chat, /api/gateway/tool-request, /api/approvals*, /mcp/tools/execute). Decide the read-only API
+  shape first (who may read events, which fields, no secrets, no raw_request leaks), then how much
+  Next.js UI (a `frontend/` folder exists; its contents were NOT inspected [unverified]), how the UI
+  authenticates (JWT, 60-minute tokens, no refresh), and that approve/reject reuse the existing
+  endpoints. No ML, no new tables unless unavoidable.
 - Phase 13 (dataset/features): training reads source='synthetic', inference windows read
-  source='live' only (#65). Anomaly/staged categories, labels and sequence ids are Phase 13's
-  (#64): this needs a `scenario`/label column or a side file, i.e. another migration. Apply the #68
-  gate: with large-jump anomalies check that the version feature value moves AND that the Isolation
-  Forest score moves (ablation with vs without the feature); fallbacks are jitter on the normal
-
-  deploy target or dropping the feature. Decide volume and the state-change/rollback mix (sparse,
-  see Phase 10 limitations). Decide whether a (user_id, timestamp) index is needed (#75).
-- Phase 14: a live window shorter than N = 5 may be incomplete because the hook is fail-open
-  (#70); decide how the model treats short windows.
-- Phase 15: do not designate production rollback as a BLOCK-class "irreversible" action (#54).
+  source='live' only (#65). Anomaly/staged categories, labels and sequence ids need a
+  `scenario`/label column or a side file, i.e. another migration (#64). Apply the #68 gate (version
+  feature value AND Isolation Forest score must move, ablation with vs without). Decide volume and
+  the state-change/rollback mix (sparse, see Phase 10 limitations) and whether a (user_id,
+  timestamp) index is needed (#75). NEW from Phase 11 (#85): decide how windows treat old `pending`
+  rows that were never decided, and how `blocked` rows from rejections and revalidation failures
+  count as behaviour.
+- Phase 14: a live window shorter than N = 5 may be incomplete because the hooks are fail-open (#70,
+  #85); decide how the model treats short windows.
+- Phase 15: do not designate production rollback as a BLOCK-class "irreversible" action (#54). NOTE:
+  there are NO BLOCK-class rows yet (#78): every HIGH production action goes to APPROVAL_REQUIRED
+  today. Decide which, if any, become BLOCK (Section 11 Step 4, last row).
 - Phase 16: FREEZE `gateway/risk_constants.py` AND the `app/database/behavior.py` working-hours
-  constants (#67) -- a later change invalidates E2. Rewrite Demo 7 per #61 (one identity
-  alternating across its two owned rows plus a separate denied attempt on a third service).
-- E3 (latency) must measure the Phase 9 history queries (reads 0, restart/deploy 3, rollback 4)
-  AND the Phase 10 hook (two reloads + one INSERT + one COMMIT per logged request, #70, #77).
-- Full suite takes ~55-60 s locally (was ~8 s before Phase 8 Stage 2). Likely argon2 hashing in
-  `make_user`; not diagnosed. Optional: `pytest tests -q --durations=8`.
+  constants (#67) -- a later change invalidates E2. Rewrite Demo 7 per #61 (one identity alternating
+  across its two owned rows plus a separate denied attempt on a third service). Demo 4 now works as
+  written (senior_developer_1 -> notification-service/production deploy -> admin approves); an admin's
+  own production request cannot be approved (#82). E6 approve-then-execute trials (Section 25, target
+  15-20): generate them by changing state between request and approval (current_version,
+  known_good_version, ownership, policy, tool disabled) and approving with a SECOND admin (throwaway
+  user; do not seed one, #8).
+- E3 (latency) must measure the Phase 9 history queries (reads 0, restart/deploy 3, rollback 4), the
+  Phase 10 hook (two reloads + one INSERT + one COMMIT per logged request, #70, #77) AND the Phase 11
+  additions: the three-row approval commit, the pending event, and approve = decision commit +
+  revalidation queries + MCP + resolve.
+- Final report must state: #82 (admin self-approval), #84 (re-lookup, strict snapshot), #79 (no
+  risk_level in responses), #55 (window key) and the other known limitations listed above.
+- Full suite takes ~90-135 s locally. Likely argon2 hashing in `make_user`; not diagnosed. Optional:
+  `pytest tests -q --durations=8`.
 
-## Next Task -- Phase 11
-Human approval workflow (Section 27 Phase 11; Sections 11, 14): approval queue, approve/reject,
-TOCTOU-style revalidation immediately before MCP execution, and the Section 11 Step 4 decision
-mapping implemented end to end (`ml_risk_level` stays a LOW stub until Phase 14, #59). Before
-coding: read Planning Sections 11, 14, 17 and decisions #47, #48, #53, #54, #58, #59, #60, #63,
-#69; resolve the Phase 11 Step 0 items in Open items; write new decisions.md entries BEFORE code
-(this time actually before the first line, see the Phase 10 process notes). Phase 11 changes
-existing tests on purpose (the #48 approval-bound BLOCK becomes APPROVAL_REQUIRED, as #34 did).
+## Next Task -- Phase 12
+Security dashboard v1 (Section 27 Phase 12; M7; FR-19; Section 17: GET /api/security/events and GET
+/api/mock/services). Before coding: read Planning Sections 17, 19, 20 (M7), 21 (FR-19), 28, 29 and
+decisions #38, #44, #60, #79, #83; resolve the Phase 12 Step 0 items in Open items; write new
+decisions.md entries BEFORE code (this time before the FIRST line, for all of them, including small
+details -- see the process notes). Phase 12 adds no ML, no new phases, and should not change Phase
+1-11 behaviour; any existing test that must change is listed and approved first.
 
 ## Important
-- Follow Planning Revision 6 and `docs/decisions.md` (77 entries).
-- Do not reorder, remove, or add phases. Do not redo Phase 1-10 unless asked.
+- Follow Planning Revision 6 and `docs/decisions.md` (89 entries).
+- Do not reorder, remove, or add phases. Do not redo Phase 1-11 unless asked.
 - Anything genuinely undecided mid-implementation gets a new decisions.md
   entry BEFORE code, not after.
   
