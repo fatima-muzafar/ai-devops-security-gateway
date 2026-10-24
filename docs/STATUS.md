@@ -86,8 +86,9 @@ this field tracks the last code-verified commit, not literal HEAD."
   in test_gateway_risk_wiring.py, minus 1 removed Stage 1 test and 1 removed parametrize case).)
 - No migration in Phase 12; the head is still e7c1a4b9d2f6 and there are still 11 tables.
 - `docs/decisions.md` has 107 entries (#1-#107; #90-#107 are Phase 12).
-- `npm run lint` and `npm run build` results were NOT reported to the assistant [unverified]; the
-  dashboard was run with `npm run dev` at http://localhost:3000 and checked by hand.
+- `npm run lint` (no errors) and `npm run build` (Next.js 16.3.6 Turbopack: compiled, TypeScript
+  finished, static routes `/` and `/_not-found`) PASSED (user-verified, output pasted after `f5835d9`).
+  The dashboard was also run with `npm run dev` at http://localhost:3000 and checked by hand.
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
 - Phase 8 smoke (real Gemini, real uvicorn): login, chat allow, Policy BLOCK, Ownership
