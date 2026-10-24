@@ -1194,3 +1194,21 @@ third-party brand names.
 Flow: Get Started and Log in open the login form; it has a Back link; Log out returns to the hero;
 a 401 goes straight to the login form with its notice.
 Limitation: presentation only; nothing in E1-E6 depends on it. Status: new decision.
+
+## 106. Restyle Login and Dashboard Like the User's Reference (supersedes parts of #102)
+The user's reference picture (a dark security table with a glowing header row, left icon sidebar,
+tick-bar risk column) is a STYLE guide only. Palette and tokens stay as in #102/#105 (no new token).
+Layout: a left icon-only sidebar (angled logo block on top, jump links to the three panels, Log out at
+the bottom) and a top header (title, "Admin dashboard", username). This REPLACES #102's "compact top
+bar with jump links". Under 900px the sidebar becomes a row on top. Links use title + aria-label.
+Panels: soft cyan glow border; panel title in the system mono stack, uppercase, letter-spaced (no font
+download); table header = glowing cyan bar; rows separated by faint cyan lines. No animation (#102).
+Risk column: a 12-tick bar plus the text label (LOW 4 ticks, MEDIUM 8, HIGH 12) and a small line
+"rule X . ml Y". It shows the LEVEL, not a measured score; the reference's percentages are NOT copied.
+Tick colours by position (green, amber, red) replace #102's "risk levels are neutral"; the text label
+is always shown. Decision badges, Approve/Reject buttons and all behaviour are unchanged.
+Files: new components/icons.tsx (inline SVG icons + logo mark), components/risk-meter.tsx; edited
+dashboard.tsx, login-form.tsx, events-panel.tsx, approvals-panel.tsx, lib/format.ts (riskText ->
+riskDetailText), app/dashboard.css (everything before the hero section is rewritten).
+Limitation: presentation only; the hero view and all backend behaviour are untouched.
+Status: new decision (user request).
