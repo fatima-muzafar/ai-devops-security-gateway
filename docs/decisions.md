@@ -1175,3 +1175,22 @@ Written BEFORE the Stage 2 code, after reading the real routes (approvals.py, se
 - API base URL: NEXT_PUBLIC_API_BASE_URL, default http://127.0.0.1:8000, read as the literal
   process.env.NEXT_PUBLIC_API_BASE_URL (inlined at build time; restart npm run dev after a change).
 Status: new decision (implementation detail; no plan change).
+
+## 105. Landing (Hero) View Before Login (user request; Optional)
+Shown first when nobody is logged in. Same route "/" (#90): the Dashboard keeps a view state
+(hero | login). No backend change, no new library, no image file, no animation (#102).
+Look: glass top bar, cyan radial glow and a faint grid on the navy background, two-column hero
+(text left, inline-SVG padlock with a shield right: flat line art, not the reference's 3D render),
+three floating decision chips (ALLOW, BLOCK, APPROVAL_REQUIRED in the #102 status colours), a stat
+row, three cards, a flow strip, a footer. All style is in dashboard.css; ONE new token
+--accent-rgb ("103, 232, 249", the accent as numbers so glows can use opacity): change it together
+with --accent. Headline: "Your AI agent proposes. The Gateway decides."
+Content must stay TRUE: 5 tools, 6 service environments, 3 decisions (Section 2); flow Developer ->
+AI agent -> Security Gateway -> tools -> simulated environment (Section 4); risky production
+changes need admin approval and revalidation; every request is recorded by request ID.
+NOT on the page: ML / anomaly detection (not built before Phase 14), "real-time", "military-grade",
+any claim of complete AI security (Section 30), partner logos, Sign up (#42), Blog/Services/About,
+third-party brand names.
+Flow: Get Started and Log in open the login form; it has a Back link; Log out returns to the hero;
+a 401 goes straight to the login form with its notice.
+Limitation: presentation only; nothing in E1-E6 depends on it. Status: new decision.
