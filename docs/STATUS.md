@@ -1,10 +1,11 @@
 # Security Gateway FYP -- Project Status
 
 ## Current Phase
-Current Phase: Phase 11 COMPLETE -- human approval workflow, TOCTOU-style revalidation and the
-Section 11 Step 4 decision mapping, enforced end to end. No ML, no frontend.
-Next: Phase 12 (security dashboard v1).
-Decisions #1-#89 locked.
+Current Phase: Phase 12 COMPLETE -- security dashboard v1: two read-only admin endpoints, CORS and a
+Next.js dashboard (hero, login, three panels, approve/reject). No ML. Optional Stage 3 (summary charts,
+#100) NOT built.
+Next: Phase 13 (dataset finalization and ML feature engineering).
+Decisions #1-#107 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -55,22 +56,38 @@ Decisions #1-#89 locked.
     tests; #89; commit `d936b95`
   - Stage 3 -- close-out: smoke (real uvicorn; direct AND real-Gemini chat mode) verified by DB
     query; this file
+- Phase 12 -- Security Dashboard v1
+  - Step 0 -- decisions #90-#100 (v1 scope, admin-only reads, event fields, endpoint shapes, token in
+    memory, CORS, manual refresh, approve/reject reuse, frontend structure, optional charts)
+  - Stage 1 -- backend: GET /api/security/events, GET /api/mock/services, CORS, 48 tests; #101;
+    commits `d19cbf8` (decisions) and `4e96b8d` (code)
+  - Stage 2 -- frontend core: login, three panels, approve/reject, one CSS file; #102-#104;
+    commits `ce3ebc6`, `872a6d9`, `82076aa`
+  - Extras requested by the user: hero landing view (#105, `2ca0f63`, `3034415`), restyle like the
+    user's reference (#106, `4e3eac2`, `51e1834`), visible Log out button (#107, `f5835d9`)
+  - Stage 3 (optional charts, #100) -- NOT built
+  - Close-out -- smoke (real uvicorn + real browser) passed; this file
 
 ## Current Repo State
-- Last verified commit: `d936b95` (Phase 11 Stage 2, the last code commit; Stage 1 is `2c30142`)
+- Last verified commit: `f5835d9` (Phase 12: visible Log out button, the last code commit). The last
+  BACKEND change is `4e96b8d` (Phase 12 Stage 1); every later commit touches only frontend/ and docs/.
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
 - Planning version: Revision 6
-- Phase 1 through Phase 11 are complete.
+- Phase 1 through Phase 12 are complete.
 - Database: 11 tables. Migration e7c1a4b9d2f6 is the head (Phase 11: approval_requests renames
   approved_at -> decided_at, adds UNIQUE(request_id), state_snapshot JSON NOT NULL and
   revalidation Text NULL -- #81). Before it: d5b2f8a1c7e3 (Phase 10, #65, #66, #75), a8d41c7e5b92
   (audit columns, #32, #39). Phases 8 and 9 added no migration; Phase 11 Stage 2 added none.
-- Full suite: 420/420 passing after Phase 11 (user-verified): 327 (Phase 1-10) + 68 (Stage 1,
+- Full suite: 468/468 passing after Phase 12 Stage 1 (user-verified): 420 (Phase 1-11) + 48 new in
+  tests/test_dashboard_api.py. No backend change after that commit. (Phase 11 detail: 327 (Phase 1-10) + 68 (Stage 1,
   tests/test_approval_logic.py) + 25 net (Stage 2: 26 new in tests/test_approval_flow.py + 1 new
-  in test_gateway_risk_wiring.py, minus 1 removed Stage 1 test and 1 removed parametrize case).
-- `docs/decisions.md` has 89 entries (#1-#89; #78-#89 are Phase 11).
+  in test_gateway_risk_wiring.py, minus 1 removed Stage 1 test and 1 removed parametrize case).)
+- No migration in Phase 12; the head is still e7c1a4b9d2f6 and there are still 11 tables.
+- `docs/decisions.md` has 107 entries (#1-#107; #90-#107 are Phase 12).
+- `npm run lint` and `npm run build` results were NOT reported to the assistant [unverified]; the
+  dashboard was run with `npm run dev` at http://localhost:3000 and checked by hand.
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
 - Phase 8 smoke (real Gemini, real uvicorn): login, chat allow, Policy BLOCK, Ownership
@@ -112,6 +129,60 @@ fail-closed BLOCK (#48 is retired). What still matters for evaluation data:
   they are not training data. Since Phase 11 such a request logs `pending` and is resolved later (#85).
 - ml_risk_level is STILL a fixed LOW stub with the marker "ml=stub" until Phase 14 (#59): rows before
   Phase 14 are excluded from E2.
+
+## Phase 12 Summary (complete)
+Backend (Stage 1; #91-#94, #96, #101; routers app/api/security.py and app/api/mock.py, admin only via
+`require_admin` imported from api/approvals.py, role read from the DB, read only, no new table):
+- GET /api/security/events?limit=50&decision=: newest first (created_at desc, request_id desc), limit
+  default 50 / max 200 (else 422), decision filter validated against the Decision enum. Returns
+  request_id, created_at, requester, agent, service_name, environment, tool, decision, reason,
+  execution_status, risk {rule_risk_level, ml_risk_level, final_risk_level, reasons} or null,
+  approval_status or null. The query selects COLUMNS only: raw_request and arguments are never loaded.
+- GET /api/mock/services: service_name, environment, current_version, known_good_version, status, owner
+  username; ordered by service_name then environment ("production" before "staging").
+- CORS (main.py, #96): CORS_ALLOWED_ORIGINS (default http://localhost:3000), "*" dropped, GET/POST,
+  Authorization + Content-Type, no credentials. http://127.0.0.1:3000 is a DIFFERENT origin.
+- Tests: tests/test_dashboard_api.py (48): 401/403/503, role read from the DB, exact rows, order, ties,
+  limit, filter, no leaks, one row per request, nothing written, seeded six services, CORS.
+Frontend (Stages 2 and extras; Next.js 16.3.6, React 19, Tailwind import only, no UI or chart library):
+- ONE route "/" (#90). components/dashboard.tsx holds the view (hero | login | dashboard). The JWT lives
+  in React memory only (#95): a reload logs out; any 401 from a panel returns to login ("Session
+  expired"); a login 401 is a login error (#104). Panels: Security Events, Approvals (status select,
+  Approve/Reject using the existing endpoints, #98), Mock Services; each has Refresh and loading /
+  error / empty states (#97). After approve/reject all panels reload. All values render as plain text.
+- All backend calls go through lib/api.ts (NEXT_PUBLIC_API_BASE_URL, default http://127.0.0.1:8000);
+  the UI never references the MCP route (Section 5). usePanelData derives loading from keys (#104).
+- ALL styling is in app/dashboard.css (#99, #102): the user's palette tokens plus --accent-rgb (#105);
+  placeholders --border, --ok, --bad, --warn, --radius are PROVISIONAL (#102). Dark only, no animation.
+- Hero landing view (#105): static, content kept true to what is built. Restyle (#106): left icon
+  sidebar, top header, glowing table header, risk LEVEL bar (LOW 4 / MEDIUM 8 / HIGH 12 ticks plus the
+  text label; not a score). Visible Log out button beside the username (#107).
+Smoke (user-verified, real uvicorn + real browser): S1 (service state read), S2 (four production
+requests -> APPROVAL_REQUIRED with the generic reason and no risk level), S3 (second approve of the
+same approval -> HTTP 409; the first attempt failed only because the 60-minute admin token had
+expired, the re-run with a fresh token passed). B1-B13 (browser: pending list and risk bars, admin
+self-approval 403, self-reject, reject needs a reason, reject, approve + executed, version V -> V+1 with
+known_good = V, TOCTOU revalidation failure naming a version field, approved/rejected views, events
+columns, no /mcp request in the Network tab, Log out, junior sees "Forbidden.") were reported as all
+PASS by the user; their screen output was not pasted to the assistant.
+- Known limitations (state in the final report):
+  - The dashboard is admin only (#91): a senior developer cannot see their own requests.
+  - The token is memory only (#95): a reload logs out; no refresh, no revocation (#42). The "Session
+    expired" screen was NOT tested. There are NO automated frontend tests (#99); only the hand smoke.
+  - Events show the latest 50 only, no pagination or filter UI (#93); leftover QA-... test rows
+    appear. The approvals list has no pagination (#83). Refresh is manual (#97).
+  - The risk bar shows the LEVEL, not a measured score (#106). Status colours and the border colour are
+    placeholders (#102). --accent-rgb must be changed together with --accent (#105).
+  - The hero page is presentation only; its text must stay true (#105): no ML claim before Phase 14.
+  - `npm install` printed 4 vulnerabilities (3 high, 1 critical) in dependencies; NOT investigated
+    [unverified]. Do not run `npm audit fix --force` blindly (it can change the Next.js version).
+  - The seeded admin still cannot approve its own production request (#82); the UI only shows the 403.
+  - No ML summary charts (#100 not built). Charts, if built later, are an illustration, never E1-E6
+    evidence (the counts include test traffic).
+- Process notes: all decisions #90-#107 were written before the code that uses them. #106 copied the
+  reference's icon-only exit control as the only log out control, which the user could not find; #107
+  fixed it. The assistant never ran any code in Phase 12 (no sandbox runs); every test, build and
+  smoke result above comes from the user's own runs.
 
 ## Phase 11 Summary (complete)
 Decision mapping (#78): `gateway/decision.py::decide_from_risk()` is pure: policy flag -> APPROVAL_REQUIRED;
@@ -336,13 +407,9 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
 ## Open items
 - Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool calls after a
   tool result are ignored). Resolve before Phase 16/17.
-- Phase 12 Step 0 must decide (suggestions, not decisions): what "dashboard v1" is. Section 17 lists
-  GET /api/security/events and GET /api/mock/services; NEITHER exists yet (built routes: /api/auth/login,
-  /api/chat, /api/gateway/tool-request, /api/approvals*, /mcp/tools/execute). Decide the read-only API
-  shape first (who may read events, which fields, no secrets, no raw_request leaks), then how much
-  Next.js UI (a `frontend/` folder exists; its contents were NOT inspected [unverified]), how the UI
-  authenticates (JWT, 60-minute tokens, no refresh), and that approve/reject reuse the existing
-  endpoints. No ML, no new tables unless unavoidable.
+- Phase 12 optional follow-ups (not required): Stage 3 summary charts (#100: counts only, 3 plain
+  bars, "demo data" label); sessionStorage if the reload logout annoys (#95); a service_state_history
+  view (#94); event filters or pagination (#93); investigate the 4 npm vulnerabilities.
 - Phase 13 (dataset/features): training reads source='synthetic', inference windows read
   source='live' only (#65). Anomaly/staged categories, labels and sequence ids need a
   `scenario`/label column or a side file, i.e. another migration (#64). Apply the #68 gate (version
@@ -369,21 +436,23 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
   additions: the three-row approval commit, the pending event, and approve = decision commit +
   revalidation queries + MCP + resolve.
 - Final report must state: #82 (admin self-approval), #84 (re-lookup, strict snapshot), #79 (no
-  risk_level in responses), #55 (window key) and the other known limitations listed above.
+  risk_level in responses), #55 (window key), #91 (admin-only dashboard), #95 (memory token), #102
+  (provisional colours), #106 (risk bar shows a level) and the other known limitations listed above.
 - Full suite takes ~90-135 s locally. Likely argon2 hashing in `make_user`; not diagnosed. Optional:
   `pytest tests -q --durations=8`.
 
-## Next Task -- Phase 12
-Security dashboard v1 (Section 27 Phase 12; M7; FR-19; Section 17: GET /api/security/events and GET
-/api/mock/services). Before coding: read Planning Sections 17, 19, 20 (M7), 21 (FR-19), 28, 29 and
-decisions #38, #44, #60, #79, #83; resolve the Phase 12 Step 0 items in Open items; write new
-decisions.md entries BEFORE code (this time before the FIRST line, for all of them, including small
-details -- see the process notes). Phase 12 adds no ML, no new phases, and should not change Phase
-1-11 behaviour; any existing test that must change is listed and approved first.
+## Next Task -- Phase 13
+Dataset finalization and ML feature engineering (Section 27 Phase 13; Sections 10, 23, 24; M4). Before
+coding: read Planning Sections 10, 23, 24, 25 (E2, E6) and decisions #55, #59, #64-#68, #73-#75, #85;
+resolve the Phase 13 items in Open items (label/scenario column or side file, volume and mix, index,
+pending and blocked rows, the #68 gate). Write new decisions.md entries BEFORE the first line of code,
+for all of them including small details. Phase 13 adds no new phases; the Isolation Forest is Phase 14.
+Any existing test that must change is listed and approved first. Phase 12 added no backend change after
+`4e96b8d`, so the Phase 13 backend baseline is 468/468 passing.
 
 ## Important
-- Follow Planning Revision 6 and `docs/decisions.md` (89 entries).
-- Do not reorder, remove, or add phases. Do not redo Phase 1-11 unless asked.
+- Follow Planning Revision 6 and `docs/decisions.md` (107 entries).
+- Do not reorder, remove, or add phases. Do not redo Phase 1-12 unless asked.
 - Anything genuinely undecided mid-implementation gets a new decisions.md
   entry BEFORE code, not after.
   

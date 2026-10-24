@@ -1105,6 +1105,7 @@ Limitations: counts are all-time; the risk chart does not add up to the decision
 have no risk row, #58); old rows with "interim: not enforced" and leftover QA rows are counted;
 the charts are an illustration and are NEVER evaluation evidence for E1-E6.
 Status: new decision (extends #91, #93).
+Build status: NOT BUILT in Phase 12 (optional Stage 3 skipped; it can still be added later).
 
 ## 101. Phase 12 Stage 1 -- Implementation Details Left Open by #91-#96
 Written BEFORE the Stage 1 code.
