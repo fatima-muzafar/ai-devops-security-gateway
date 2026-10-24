@@ -1001,3 +1001,125 @@ Written BEFORE the Stage 2 code.
 - Known limitation: a crash between the approve commit and the MCP call leaves the request approved + not_executed and there is no retry endpoint. A second approve returns 409, so nothing can run twice.
 - Agent and chat: no change (the relay already prints any non-ALLOW decision, #23, #27).
 Status: new decision (implementation detail; no plan change).
+
+<!-- APPEND to docs/decisions.md, after #89. Written BEFORE code (standing rule). -->
+
+## Phase 12 Decisions -- Security Dashboard v1
+
+## 90. What "v1" Means
+API first, then ONE Next.js page with a login form and three panels: security events,
+approvals, mock services. No multi-page routing, no NextAuth, no auth middleware.
+Approve/reject reuse the existing endpoints (#83, #89). Phase 12 adds no ML, no new roles,
+no websockets, no new phases, and does not change Phase 1-11 behaviour.
+Why: Section 27 Phase 12, M7, FR-19. Limitation: plain UI, no search, no pagination UI.
+Status: locked by plan; scope details new.
+
+## 91. Who May Read
+Both new read endpoints are admin only. They reuse `require_admin` from api/approvals.py:
+401 no/invalid token, 403 non-admin; the role is read from the DB, never from the token (#44).
+Why: #82/#83 already make approvals admin only; one rule is simple to test. Limitation: a
+senior developer cannot see their own requests (Section 14 says "admin/lead", but there is no
+lead role, Section 2). Status: new decision.
+
+## 92. Event Fields (what is shown, what is never returned)
+Returned per event: request_id, created_at, requester (username or null), agent, service_name,
+environment, tool, decision, reason, execution_status, risk {rule_risk_level, ml_risk_level,
+final_risk_level, reasons} or null, approval_status or null.
+NEVER returned: raw_request, arguments, tokens, password hashes, internal numeric IDs.
+Why: raw_request holds attacker-controlled text (unauthenticated callers can write BLOCK
+rows, #44). Risk detail is admin-only (#79); it must never appear in a Gateway response (#60).
+UI rule: all text is rendered as plain text; never dangerouslySetInnerHTML (reason can echo
+user input, #41). Limitation: the admin cannot see the arguments of a BLOCKed request here
+(the approvals list still shows arguments). Status: new decision.
+
+## 93. Events Endpoint Shape
+GET /api/security/events?limit=50&decision=. Newest first, ties broken by request_id.
+limit default 50, max 200 (out of range -> 422). decision filter is optional and validated
+against the Decision enum. No cursor, no pagination UI, no search. Read only: it writes no rows
+and creates no behavior events. Joins to risk and approval are outer joins; a test asserts
+exactly one row per request_id (risk_assessments has no UNIQUE on request_id).
+Limitation: old events are not reachable; leftover test rows (QA-...) appear.
+Status: new decision.
+
+## 94. Mock Services Endpoint
+GET /api/mock/services (Section 17), admin only (#91). Returns the 6 service/environment rows:
+service_name, environment, current_version, known_good_version, status, owner (username).
+Ordered by service_name, then environment. NOT included: service_state_history (Optional,
+later). Read only. Limitation: no restart counts in the UI. Status: locked by plan (Section 17);
+fields new.
+
+## 95. UI Login and Token Handling
+The UI posts to the existing POST /api/auth/login. The JWT lives in React memory only: not
+localStorage, not sessionStorage. Any 401 from any call clears the token and shows the login
+form. 503 shows "authentication not configured". Why: tokens last 60 minutes with no refresh
+(#42); memory is safest for a page that shows attacker-influenced text. Limitation: a page
+reload means logging in again. sessionStorage is the fallback if that hurts; the user decides.
+Status: new decision.
+
+## 96. CORS
+Add CORSMiddleware in main.py (bootstrap only, #25). Allowed origins come from env
+CORS_ALLOWED_ORIGINS (comma-separated, default http://localhost:3000). Methods GET, POST.
+Headers Authorization, Content-Type. allow_credentials=False (bearer header, no cookies).
+Never "*". Rejected: a Next.js proxy (puts MCP behind the web server, more moving parts).
+The UI code never references /mcp (Section 5); the MCP route also needs X-Internal-Token (#37).
+Limitation: edits Phase 1-11 file main.py; behaviour is unchanged for non-browser callers.
+Any existing test that must change is listed and approved first. Status: new decision.
+
+## 97. Refresh
+A manual Refresh button per panel, plus an automatic reload of approvals, events and services
+after approve or reject. No polling, no websockets. Limitation: the admin must click Refresh to
+see new requests. Status: new decision.
+
+## 98. Approve/Reject in the UI
+Uses POST /api/approvals/{id}/approve and /reject only. Reject needs a non-empty reason (UI
+checks; server enforces with 422, #83). The UI shows the server answer as it is: outcome
+executed, revalidation_failed (with its reason), 403 (self-approval), 404, 409, 502.
+The UI makes no security decision and computes nothing about risk. Limitation: the seeded admin
+cannot approve its own request (#82); the UI only shows the server's 403.
+Status: locked by #83, #89.
+
+## 99. Frontend Structure and Tests
+All backend calls go through frontend/lib/api.ts; types in frontend/lib/types.ts. API base URL
+from NEXT_PUBLIC_API_BASE_URL (default http://127.0.0.1:8000; public, never a secret). All
+style (colors, fonts, spacing, light/dark, icons) lives in ONE place chosen by the user; the
+assistant builds structure and behaviour only. Every panel has loading, error and empty
+states. No UI or chart library without the user's permission. Before UI code the user pastes
+the relevant file from node_modules/next/dist/docs/ (frontend/AGENTS.md: this Next.js has
+breaking changes). Backend: pytest with exact-value assertions. Frontend: NO automated tests
+(Out of Scope); the browser smoke test replaces them. Limitation: UI bugs are found by hand.
+Status: new decision.
+
+## 100. Optional Summary Charts (Stage 3 only)
+Built only after Stages 1-2 are finished. If skipped, this entry stays marked "not built".
+GET /api/security/summary: admin only (#91), read only, no new table, no migration, no writes.
+COUNTS only; no text fields, no raw_request. Fixed keys, always present, 0 when empty:
+decisions {ALLOW, BLOCK, APPROVAL_REQUIRED} from security_requests.decision;
+final_risk {LOW, MEDIUM, HIGH} from risk_assessments.final_risk_level;
+approvals {pending, approved, rejected} from approval_requests.status.
+Key spellings come from enums.py (Decision and RiskLevel uppercase, ApprovalStatus lowercase);
+Stage 3 confirms them against enums.py before coding. Rows with a NULL decision are not counted
+in any chart; the response keeps its fixed keys. At most 3 charts, plain CSS/SVG bars, no chart
+library unless the user asks; each bar shows its number as text. A static label "demo data" is
+always shown (fixed text; the code does not detect anything).
+Limitations: counts are all-time; the risk chart does not add up to the decisions chart (BLOCKs
+have no risk row, #58); old rows with "interim: not enforced" and leftover QA rows are counted;
+the charts are an illustration and are NEVER evaluation evidence for E1-E6.
+Status: new decision (extends #91, #93).
+
+## 101. Phase 12 Stage 1 -- Implementation Details Left Open by #91-#96
+Written BEFORE the Stage 1 code.
+- `require_admin` is IMPORTED from api/approvals.py; it is not moved to deps.py, so the
+  Phase 11 file stays untouched. New routers: api/security.py (events), api/mock.py (services).
+- The events query selects COLUMNS only: raw_request and arguments are never loaded from the DB,
+  so they cannot leak by a later edit of the row builder. Order: created_at DESC, request_id DESC.
+- created_at is returned as an ISO 8601 string. Services are ordered by service_name, then the
+  stored environment string, so "production" comes before "staging".
+- CORS origins are read ONCE at import (after app imports have run load_dotenv); each origin is
+  stripped of spaces and a trailing "/"; "*" is dropped; empty gives the default. The module
+  constant is CORS_ORIGINS. http://127.0.0.1:3000 is a DIFFERENT origin from http://localhost:3000:
+  add it to CORS_ALLOWED_ORIGINS if the page is opened that way. backend/.env.example gets the key.
+- Tests: tests/test_dashboard_api.py. Rows use request ids "QA-DASH-..." and created_at in the
+  year 2099, so they are the newest rows and the tests need no knowledge of the dev data. Teardown
+  deletes by that prefix through delete_requests(). The "seeded six" test needs a seeded dev DB
+  (like test_seed.py). One test relies on Starlette answering a refused preflight with HTTP 400.
+Status: new decision (implementation detail; no plan change).
