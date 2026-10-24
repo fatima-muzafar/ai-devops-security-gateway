@@ -11,9 +11,10 @@ export interface Session {
 interface Props {
   notice: string | null;
   onLoggedIn: (session: Session) => void;
+  onBack?: () => void;
 }
 
-export default function LoginForm({ notice, onLoggedIn }: Props) {
+export default function LoginForm({ notice, onLoggedIn, onBack }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +68,11 @@ export default function LoginForm({ notice, onLoggedIn }: Props) {
       <button className="button button-primary" type="submit" disabled={busy}>
         {busy ? "Logging in..." : "Log in"}
       </button>
+      {onBack && (
+        <button className="button login-back" type="button" onClick={onBack} disabled={busy}>
+          Back to home
+        </button>
+      )}
     </form>
   );
 }
