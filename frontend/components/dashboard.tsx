@@ -76,6 +76,9 @@ export default function Dashboard() {
           <span className="shell-sub">Admin dashboard</span>
           <span className="shell-space" />
           <span className="shell-user">{session.username}</span>
+          <button className="button shell-logout" type="button" onClick={handleLogout}>
+            Log out
+          </button>
         </header>
         <main className="content">
           <EventsPanel

@@ -1212,3 +1212,10 @@ dashboard.tsx, login-form.tsx, events-panel.tsx, approvals-panel.tsx, lib/format
 riskDetailText), app/dashboard.css (everything before the hero section is rewritten).
 Limitation: presentation only; the hero view and all backend behaviour are untouched.
 Status: new decision (user request).
+
+## 107. Visible Log Out Button in the Top Header (fixes a usability gap in #106)
+#106 copied the reference's icon-only exit block at the bottom of the sidebar as the ONLY log out
+control; it has no text and sits far from the username, so the user could not find it. Resolved: a
+text button "Log out" is added in the top header right beside the username, same handler as the
+sidebar icon (clears the in-memory session and returns to the hero, #95, #105). The sidebar icon
+stays. No backend change. Limitation: two controls do the same thing. Status: new decision (user report).
