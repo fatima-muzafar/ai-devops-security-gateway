@@ -1158,3 +1158,20 @@ the call runs); the server answer is shown as text (#98). Every value renders as
 User runs: npm run lint, npm run build. No frontend tests (#99).
 Limitation: next dev may send each GET twice on mount (React strict mode); harmless, read only.
 Status: new decision (implementation detail; no plan change).
+
+## 104. Phase 12 Stage 2 -- Small Details Left Open by #103
+Written BEFORE the Stage 2 code, after reading the real routes (approvals.py, security.py, mock.py).
+- Extra file lib/format.ts: formatTime (browser local time, raw text if unparsable), riskText,
+  reasonsText, decisionClass. A null decision is shown as "none".
+- usePanelData(load, token, reloadKey, onUnauthorized, scope): loading and refreshing are DERIVED
+  from keys (no setState in effects). A refresh keeps the old rows until new ones arrive; a scope
+  change (approvals status) hides the old rows. A 401 calls onUnauthorized().
+- A 401 from POST /api/auth/login is a login error ("Invalid username or password."), never
+  "Session expired". Panels are unmounted on logout, so no data stays for the next user.
+- Approvals risk keys are rule_risk_level / ml_risk_level / final_risk_level / reasons, the same
+  as events (confirmed in the code). Non-pending views show reviewer, reason and revalidation.
+- The action message stays in the Approvals panel until the next action. After any approve/reject
+  answer except 401, all three panels reload (a 409 or 502 may have changed the state).
+- API base URL: NEXT_PUBLIC_API_BASE_URL, default http://127.0.0.1:8000, read as the literal
+  process.env.NEXT_PUBLIC_API_BASE_URL (inlined at build time; restart npm run dev after a change).
+Status: new decision (implementation detail; no plan change).
