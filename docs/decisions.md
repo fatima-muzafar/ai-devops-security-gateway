@@ -1123,3 +1123,38 @@ Written BEFORE the Stage 1 code.
   deletes by that prefix through delete_requests(). The "seeded six" test needs a seeded dev DB
   (like test_seed.py). One test relies on Starlette answering a refused preflight with HTTP 400.
 Status: new decision (implementation detail; no plan change).
+
+## 102. Dashboard Style (set by the user; the assistant does not change it)
+All style lives in frontend/app/dashboard.css; components use plain class names only (#99).
+Tokens in ONE :root block: --bg #0B1220, --surface #111C2E, --accent #67E8F9, --text #E5EEF8,
+--muted #94A3B8 (user). PROVISIONAL, assistant placeholders the user may replace: --border
+#1F2E47, --ok #34D399 (ALLOW), --bad #F87171 (BLOCK), --warn #FBBF24 (APPROVAL_REQUIRED),
+--radius 8px. Font: Inter, then system sans-serif (no next/font, no font download).
+Dark only: color-scheme dark, no prefers-color-scheme branch. Layout: compact top bar (name,
+user, log out, jump links) and three stacked panels in this order: Security Events, Approvals,
+Mock Services. Compact padding, subtle borders, moderate radius, clear table rows.
+Decision badges also carry the TEXT (colour is never the only signal). Risk levels, execution
+and approval statuses are neutral (no colour was specified). No animations, transitions, UI
+library or chart in Stages 1-2 (charts: Stage 3 only, #100).
+Limitation: Inter appears only if installed on the viewing machine.
+Status: new decision (user's style notes).
+
+## 103. Phase 12 Stage 2 -- Frontend Structure and Behaviour (details left open by #90-#99)
+Written BEFORE the Stage 2 code. Types are copied from the real route output, not from memory.
+Files: lib/types.ts, lib/api.ts (one request() helper, token passed as an argument, no "/mcp"),
+lib/use-panel-data.ts, components/{dashboard,login-form,events-panel,approvals-panel,
+services-panel}.tsx, app/page.tsx (server component, renders <Dashboard/>), app/layout.tsx
+(real title, no next/font, imports ./dashboard.css after ./globals.css), app/globals.css
+(reduced to the Tailwind import; light/dark variables removed, #102), app/dashboard.css.
+Client components start with "use client".
+State: token + username only in the Dashboard's React state (#95). Any 401 clears them and shows
+the login form ("Session expired"). Panels never check roles: a 403 shows the server message (#98).
+Panels: load on mount, Refresh button, Loading / error / empty states. "Loading" is set in event
+handlers, not inside effects (eslint-config-next 16 may reject setState in an effect; npm run
+lint will tell). After approve or reject all three panels reload (#97).
+Events: last 50 (#93), no filter UI. Approvals: status select (pending/approved/rejected);
+pending rows get a reason box plus Approve and Reject (reject needs a reason; buttons off while
+the call runs); the server answer is shown as text (#98). Every value renders as plain text (#92).
+User runs: npm run lint, npm run build. No frontend tests (#99).
+Limitation: next dev may send each GET twice on mount (React strict mode); harmless, read only.
+Status: new decision (implementation detail; no plan change).
