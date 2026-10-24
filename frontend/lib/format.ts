@@ -7,9 +7,8 @@ export function formatTime(iso: string | null): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
 }
 
-export function riskText(risk: Risk | null): string {
-  if (!risk) return "none";
-  return `${risk.final_risk_level} (rule ${risk.rule_risk_level}, ml ${risk.ml_risk_level})`;
+export function riskDetailText(risk: Risk): string {
+  return `rule ${risk.rule_risk_level} \u00b7 ml ${risk.ml_risk_level}`;
 }
 
 export function reasonsText(risk: Risk | null): string {

@@ -1,8 +1,9 @@
 "use client";
 
 import { getEvents } from "@/lib/api";
-import { decisionClass, formatTime, reasonsText, riskText } from "@/lib/format";
+import { decisionClass, formatTime, reasonsText } from "@/lib/format";
 import { usePanelData } from "@/lib/use-panel-data";
+import RiskMeter from "./risk-meter";
 
 interface Props {
   token: string;
@@ -62,7 +63,9 @@ export default function EventsPanel({ token, reloadKey, onUnauthorized }: Props)
                     <span className={decisionClass(e.decision)}>{e.decision ?? "none"}</span>
                   </td>
                   <td>{e.execution_status}</td>
-                  <td>{riskText(e.risk)}</td>
+                  <td>
+                    <RiskMeter risk={e.risk} />
+                  </td>
                   <td className="muted">{reasonsText(e.risk)}</td>
                   <td>{e.approval_status ?? ""}</td>
                   <td>{e.reason ?? ""}</td>

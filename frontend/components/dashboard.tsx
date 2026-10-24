@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import ApprovalsPanel from "./approvals-panel";
 import EventsPanel from "./events-panel";
 import Hero from "./hero";
+import { Icon, LogoMark } from "./icons";
 import LoginForm, { type Session } from "./login-form";
 import ServicesPanel from "./services-panel";
 
@@ -41,38 +42,60 @@ export default function Dashboard() {
     );
   }
 
+  // Layout: icon sidebar + top header (decisions.md #106)
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">Security Gateway</span>
-        <nav className="topnav">
-          <a href="#events">Security Events</a>
-          <a href="#approvals">Approvals</a>
-          <a href="#services">Mock Services</a>
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="sidebar-logo">
+          <LogoMark />
+        </div>
+        <nav className="sidebar-nav">
+          <a className="side-link" href="#events" title="Security Events" aria-label="Security Events">
+            <Icon kind="events" />
+          </a>
+          <a className="side-link" href="#approvals" title="Approvals" aria-label="Approvals">
+            <Icon kind="approvals" />
+          </a>
+          <a className="side-link" href="#services" title="Mock Services" aria-label="Mock Services">
+            <Icon kind="services" />
+          </a>
         </nav>
-        <span className="topbar-user">{session.username}</span>
-        <button className="button" type="button" onClick={handleLogout}>
-          Log out
+        <button
+          className="side-link side-logout"
+          type="button"
+          onClick={handleLogout}
+          title="Log out"
+          aria-label="Log out"
+        >
+          <Icon kind="logout" />
         </button>
-      </header>
-      <main className="content">
-        <EventsPanel
-          token={session.token}
-          reloadKey={reloadKey}
-          onUnauthorized={handleUnauthorized}
-        />
-        <ApprovalsPanel
-          token={session.token}
-          reloadKey={reloadKey}
-          onUnauthorized={handleUnauthorized}
-          onDecided={reloadAll}
-        />
-        <ServicesPanel
-          token={session.token}
-          reloadKey={reloadKey}
-          onUnauthorized={handleUnauthorized}
-        />
-      </main>
+      </aside>
+      <div className="shell-main">
+        <header className="shell-top">
+          <h1 className="shell-title">Security Gateway</h1>
+          <span className="shell-sub">Admin dashboard</span>
+          <span className="shell-space" />
+          <span className="shell-user">{session.username}</span>
+        </header>
+        <main className="content">
+          <EventsPanel
+            token={session.token}
+            reloadKey={reloadKey}
+            onUnauthorized={handleUnauthorized}
+          />
+          <ApprovalsPanel
+            token={session.token}
+            reloadKey={reloadKey}
+            onUnauthorized={handleUnauthorized}
+            onDecided={reloadAll}
+          />
+          <ServicesPanel
+            token={session.token}
+            reloadKey={reloadKey}
+            onUnauthorized={handleUnauthorized}
+          />
+        </main>
+      </div>
     </div>
   );
 }

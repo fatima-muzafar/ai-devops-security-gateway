@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { ApiError, login } from "@/lib/api";
+import { LogoMark } from "./icons";
 
 export interface Session {
   token: string;
@@ -39,8 +40,13 @@ export default function LoginForm({ notice, onLoggedIn, onBack }: Props) {
 
   return (
     <form className="login-card" onSubmit={handleSubmit}>
-      <h1 className="login-title">Security Gateway</h1>
-      <p className="muted">Admin dashboard. Log in with an admin account.</p>
+      <div className="login-brand">
+        <span className="login-logo">
+          <LogoMark />
+        </span>
+        <h1 className="login-title">Security Gateway</h1>
+      </div>
+      <p className="muted login-sub">Admin dashboard. Log in with an admin account.</p>
       {notice && <p className="notice">{notice}</p>}
       {error && <p className="notice notice-error">{error}</p>}
       <label className="field">

@@ -2,8 +2,9 @@
 
 import { useCallback, useState } from "react";
 import { ApiError, decideApproval, getApprovals } from "@/lib/api";
-import { formatTime, reasonsText, riskText } from "@/lib/format";
+import { formatTime, reasonsText } from "@/lib/format";
 import { usePanelData } from "@/lib/use-panel-data";
+import RiskMeter from "./risk-meter";
 import type { ApprovalItem, ApprovalStatus, DecisionResult } from "@/lib/types";
 
 const STATUSES: ApprovalStatus[] = ["pending", "approved", "rejected"];
@@ -146,7 +147,9 @@ export default function ApprovalsPanel({ token, reloadKey, onUnauthorized, onDec
                   <td>{a.environment ?? ""}</td>
                   <td>{a.tool ?? ""}</td>
                   <td className="mono">{JSON.stringify(a.arguments)}</td>
-                  <td>{riskText(a.risk)}</td>
+                  <td>
+                    <RiskMeter risk={a.risk} />
+                  </td>
                   <td className="muted">{reasonsText(a.risk)}</td>
                   {pending ? (
                     <td>

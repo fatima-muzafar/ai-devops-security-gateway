@@ -1,5 +1,5 @@
-/* ALL dashboard styling lives in this file (decisions.md #99, #102). Edit the tokens below to
-   change the look; components only use the plain class names defined here. Dark only. */
+/* ALL dashboard styling lives in this file (decisions.md #99, #102, #105, #106). Edit the tokens
+   below to change the look; components only use the plain class names defined here. Dark only. */
 
 :root {
   /* Chosen by the user */
@@ -42,64 +42,208 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
-/* ---- top bar and page layout ---- */
-.topbar {
+/* ---- app shell: icon sidebar + top header (decisions.md #106) ---- */
+.shell {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  background:
+    radial-gradient(70% 40% at 60% 0%, rgba(var(--accent-rgb), 0.1), transparent 70%),
+    var(--bg);
+}
+.shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(var(--accent-rgb), 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+}
+.shell > * {
+  position: relative;
+}
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  width: 76px;
+  height: 100vh;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.07), transparent 60%),
+    var(--surface);
+  border-right: 1px solid rgba(var(--accent-rgb), 0.18);
+}
+.sidebar-logo,
+.side-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 76px;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 0.2));
+  color: var(--bg);
+}
+.sidebar-logo {
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 0 100%);
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 28px;
+}
+.side-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 54px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+}
+.side-link:hover {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.16), transparent);
+}
+.side-logout {
+  margin-top: auto;
+  clip-path: polygon(0 22%, 100% 0, 100% 100%, 0 100%);
+  border-left: none;
+  color: var(--bg);
+  cursor: pointer;
+}
+.side-logout:hover {
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.8), rgba(var(--accent-rgb), 0.3));
+}
+.icon {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.logo-mark {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.sidebar-logo .logo-mark,
+.login-logo .logo-mark {
+  stroke: var(--bg);
+}
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.shell-top {
   position: sticky;
   top: 0;
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 20px;
+  height: 76px;
+  padding: 0 28px;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.18);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
-.brand {
+.shell-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14px;
   font-weight: 600;
-  color: var(--accent);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
 }
-.topnav {
-  display: flex;
-  gap: 16px;
+.shell-sub {
+  color: var(--muted);
+}
+.shell-space {
   flex: 1;
 }
-.topnav a {
-  color: var(--muted);
-  text-decoration: none;
-}
-.topnav a:hover {
+.shell-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 999px;
   color: var(--text);
 }
-.topbar-user {
-  color: var(--muted);
+.shell-user::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
 }
 .content {
-  max-width: 1500px;
+  max-width: 1600px;
+  width: 100%;
   margin: 0 auto;
-  padding: 20px;
+  padding: 28px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 28px;
 }
 
 /* ---- panels ---- */
 .panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.05), transparent 40%),
+    var(--surface);
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
   border-radius: var(--radius);
-  scroll-margin-top: 64px;
+  box-shadow: 0 0 40px rgba(var(--accent-rgb), 0.06);
+  scroll-margin-top: 96px;
 }
 .panel-head {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 16px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
 }
 .panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
-  font-size: 16px;
+  font-family: var(--mono);
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.panel-title::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  transform: rotate(45deg);
 }
 .panel-sub {
   flex: 1;
@@ -107,7 +251,7 @@ select:focus-visible {
 }
 .state {
   margin: 0;
-  padding: 16px;
+  padding: 20px;
   color: var(--muted);
 }
 .muted {
@@ -121,7 +265,7 @@ select:focus-visible {
 
 /* ---- messages ---- */
 .notice {
-  margin: 12px 16px;
+  margin: 14px 20px;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -136,35 +280,47 @@ select:focus-visible {
   color: var(--ok);
 }
 
-/* ---- tables ---- */
+/* ---- tables: glowing header bar, faint row lines ---- */
 .table-wrap {
   overflow-x: auto;
+  padding: 18px 20px 20px;
 }
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 .table th {
-  padding: 8px 12px;
+  padding: 12px 14px;
   text-align: left;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
   white-space: nowrap;
-  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.22), rgba(var(--accent-rgb), 0.07));
+  border-top: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.55);
+  box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.12);
+}
+.table th:first-child {
+  border-left: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-radius: 6px 0 0 6px;
+}
+.table th:last-child {
+  border-right: 1px solid rgba(var(--accent-rgb), 0.55);
+  border-radius: 0 6px 6px 0;
 }
 .table td {
-  padding: 8px 12px;
-  vertical-align: top;
-  border-bottom: 1px solid var(--border);
+  padding: 12px 14px;
+  vertical-align: middle;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.035), transparent);
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.14);
 }
-.table tbody tr:last-child td {
-  border-bottom: none;
-}
-.table tbody tr:hover {
-  background: var(--bg);
+.table tbody tr:hover td {
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 /* ---- decision badges (text is always shown too) ---- */
@@ -180,14 +336,52 @@ select:focus-visible {
 .badge-allow {
   color: var(--ok);
   border-color: var(--ok);
+  box-shadow: 0 0 10px -3px currentColor;
 }
 .badge-block {
   color: var(--bad);
   border-color: var(--bad);
+  box-shadow: 0 0 10px -3px currentColor;
 }
 .badge-approval {
   color: var(--warn);
   border-color: var(--warn);
+  box-shadow: 0 0 10px -3px currentColor;
+}
+
+/* ---- risk level bar (decisions.md #106): shows the LEVEL, never a score ---- */
+.risk {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.risk-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.risk-bar {
+  display: inline-flex;
+  gap: 3px;
+}
+.tick {
+  width: 3px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.tick-on.tick-lo {
+  background: var(--ok);
+}
+.tick-on.tick-mid {
+  background: var(--warn);
+}
+.tick-on.tick-hi {
+  background: var(--bad);
+}
+.risk-detail {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 /* ---- buttons and inputs ---- */
@@ -195,13 +389,14 @@ select:focus-visible {
   padding: 6px 12px;
   background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
   border-radius: var(--radius);
   font: inherit;
   cursor: pointer;
 }
 .button:hover:not(:disabled) {
   border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.25);
 }
 .button:disabled {
   opacity: 0.5;
@@ -212,6 +407,7 @@ select:focus-visible {
   border-color: var(--accent);
   color: var(--bg);
   font-weight: 600;
+  box-shadow: 0 0 16px rgba(var(--accent-rgb), 0.3);
 }
 .button-danger {
   border-color: var(--bad);
@@ -225,6 +421,10 @@ select:focus-visible {
   border-radius: var(--radius);
   font: inherit;
 }
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.25);
+}
 .actions {
   display: flex;
   align-items: center;
@@ -236,34 +436,68 @@ select:focus-visible {
 
 /* ---- login ---- */
 .login-page {
-  background:
-    radial-gradient(55% 45% at 50% 15%, rgba(var(--accent-rgb), 0.14), transparent 70%),
-    var(--bg);
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
+  background:
+    linear-gradient(rgba(var(--accent-rgb), 0.035) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.035) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(55% 45% at 50% 15%, rgba(var(--accent-rgb), 0.16), transparent 70%),
+    var(--bg);
 }
 .login-card {
+  position: relative;
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 24px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  gap: 14px;
+  padding: 28px;
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.06), transparent 45%),
+    var(--surface);
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
   border-radius: var(--radius);
+  box-shadow: 0 0 50px rgba(var(--accent-rgb), 0.12);
+}
+.login-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 24px;
+  right: 24px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
 }
 .login-card .notice {
   margin: 0;
 }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.login-logo {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 0.2));
+  clip-path: polygon(0 0, 100% 0, 100% 78%, 0 100%);
+}
 .login-title {
   margin: 0;
-  font-size: 20px;
+  font-family: var(--mono);
+  font-size: 15px;
   font-weight: 600;
-  color: var(--accent);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.login-sub {
+  margin: 0;
 }
 .field {
   display: flex;
@@ -273,6 +507,56 @@ select:focus-visible {
 }
 .login-back {
   margin-top: -4px;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    border-right: none;
+    border-bottom: 1px solid rgba(var(--accent-rgb), 0.18);
+  }
+  .sidebar-logo,
+  .side-logout {
+    width: 60px;
+    height: 60px;
+    flex-shrink: 0;
+  }
+  .side-logout {
+    margin-top: 0;
+    clip-path: none;
+  }
+  .sidebar-nav {
+    flex: 1;
+    flex-direction: row;
+    justify-content: center;
+    margin-top: 0;
+  }
+  .side-link {
+    width: 56px;
+    height: 56px;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+  }
+  .side-link:hover {
+    border-bottom-color: var(--accent);
+  }
+  .shell-top {
+    position: static;
+    padding: 0 16px;
+  }
+  .shell-sub {
+    display: none;
+  }
+  .content {
+    padding: 16px;
+  }
 }
 
 /* ---- landing (hero) view, decisions.md #105 ---- */
