@@ -2,10 +2,10 @@
 
 ## Current Phase
 Current Phase: Phase 12 COMPLETE -- security dashboard v1: two read-only admin endpoints, CORS and a
-Next.js dashboard (hero, login, three panels, approve/reject). No ML. Optional Stage 3 (summary charts,
-#100) NOT built.
+Next.js app (hero, login, DevOps agent chat, three admin panels, approve/reject). No ML. Optional
+Stage 3 (summary charts, #100) NOT built.
 Next: Phase 13 (dataset finalization and ML feature engineering).
-Decisions #1-#107 locked.
+Decisions #1-#110 locked.
 
 ## Completed
 - Phase 1 -- Project setup and repository structure
@@ -64,13 +64,14 @@ Decisions #1-#107 locked.
   - Stage 2 -- frontend core: login, three panels, approve/reject, one CSS file; #102-#104;
     commits `ce3ebc6`, `872a6d9`, `82076aa`
   - Extras requested by the user: hero landing view (#105, `2ca0f63`, `3034415`), restyle like the
-    user's reference (#106, `4e3eac2`, `51e1834`), visible Log out button (#107, `f5835d9`)
+    user's reference (#106, `4e3eac2`, `51e1834`), visible Log out button (#107, `f5835d9`),
+    chat screen for the DevOps agent (#108-#110, `cf96973` decisions, `a0c158e` code)
   - Stage 3 (optional charts, #100) -- NOT built
   - Close-out -- smoke (real uvicorn + real browser) passed; this file
 
 ## Current Repo State
-- Last verified commit: `f5835d9` (Phase 12: visible Log out button, the last code commit). The last
-  BACKEND change is `4e96b8d` (Phase 12 Stage 1); every later commit touches only frontend/ and docs/.
+- Last verified commit: `a0c158e` (Phase 12: chat screen, the last code commit). The last BACKEND
+  change is `4e96b8d` (Phase 12 Stage 1); every later commit touches only frontend/ and docs/.
 "Docs-only commits (no backend/ changes) do not require a hash update here --
 this field tracks the last code-verified commit, not literal HEAD."
 
@@ -85,9 +86,10 @@ this field tracks the last code-verified commit, not literal HEAD."
   tests/test_approval_logic.py) + 25 net (Stage 2: 26 new in tests/test_approval_flow.py + 1 new
   in test_gateway_risk_wiring.py, minus 1 removed Stage 1 test and 1 removed parametrize case).)
 - No migration in Phase 12; the head is still e7c1a4b9d2f6 and there are still 11 tables.
-- `docs/decisions.md` has 107 entries (#1-#107; #90-#107 are Phase 12).
+- `docs/decisions.md` has 110 entries (#1-#110; #90-#110 are Phase 12).
 - `npm run lint` (no errors) and `npm run build` (Next.js 16.3.6 Turbopack: compiled, TypeScript
-  finished, static routes `/` and `/_not-found`) PASSED (user-verified, output pasted after `f5835d9`).
+  finished, static routes `/` and `/_not-found`) PASSED (user-verified, output pasted after `f5835d9`
+  and again with the chat screen applied, before commit `a0c158e`).
   The dashboard was also run with `npm run dev` at http://localhost:3000 and checked by hand.
 - Real `GOOGLE_API_KEY`, `MCP_INTERNAL_TOKEN`, `JWT_SECRET` and `SEED_USER_PASSWORD` live in
   git-ignored `backend/.env` (Gemini free tier #16; MCP token #37/#40; JWT #42; seed #43).
@@ -158,6 +160,13 @@ Frontend (Stages 2 and extras; Next.js 16.3.6, React 19, Tailwind import only, n
 - Hero landing view (#105): static, content kept true to what is built. Restyle (#106): left icon
   sidebar, top header, glowing table header, risk LEVEL bar (LOW 4 / MEDIUM 8 / HIGH 12 ticks plus the
   text label; not a score). Visible Log out button beside the username (#107).
+- Chat screen (#108-#110, components/chat-panel.tsx): the sidebar has Chat | Dashboard | Log out; Chat
+  is the first view after login for EVERY role (the UI does not know the role); both views stay
+  mounted (the inactive one is hidden). It calls only POST /api/chat through lib/api.ts. The agent
+  reply is rendered as PLAIN TEXT (untrusted LLM output, #92); it shows the Gateway decision badge,
+  a muted "agent proposed: <tool_request JSON>" line and the request_id. One message at a time,
+  "Thinking..." while waiting, 2000-character UI cap (UX only), three example chips that only fill the
+  input. A non-admin who opens Dashboard sees the server's "Forbidden." in each panel (#98).
 Smoke (user-verified, real uvicorn + real browser): S1 (service state read), S2 (four production
 requests -> APPROVAL_REQUIRED with the generic reason and no risk level), S3 (second approve of the
 same approval -> HTTP 409; the first attempt failed only because the 60-minute admin token had
@@ -166,6 +175,15 @@ self-approval 403, self-reject, reject needs a reason, reject, approve + execute
 known_good = V, TOCTOU revalidation failure naming a version field, approved/rejected views, events
 columns, no /mcp request in the Network tab, Log out, junior sees "Forbidden.") were reported as all
 PASS by the user; their screen output was not pasted to the assistant.
+Chat smoke C1-C9 (user-verified in the browser; real Gemini + real uvicorn; C2-C6 outputs pasted):
+senior_developer_1: logs of auth-service staging -> ALLOW with the logs; logs of notification-service
+staging -> Ownership BLOCK (that row's staging owner is junior_developer_1, #8; Demo 6 shown by
+accident); production restart of notification-service -> APPROVAL_REQUIRED; Dashboard -> "Forbidden."
+in all three panels. admin: approved that request -> "Approved and executed", pending list empty.
+junior_developer_1: deploy to notification-service staging -> Policy-stage BLOCK (role not permitted
+to use deploy_service). Tab switch kept the messages, F5 returned to the hero, no /mcp request
+(C7-C9 reported PASS, output not pasted). The assistant's first C2 expectation (ALLOW for
+senior_developer_1 on notification-service staging) was WRONG; the Gateway was right.
 - Known limitations (state in the final report):
   - The dashboard is admin only (#91): a senior developer cannot see their own requests.
   - The token is memory only (#95): a reload logs out; no refresh, no revocation (#42). The "Session
@@ -178,9 +196,17 @@ PASS by the user; their screen output was not pasted to the assistant.
   - `npm install` printed 4 vulnerabilities (3 high, 1 critical) in dependencies; NOT investigated
     [unverified]. Do not run `npm audit fix --force` blindly (it can change the Next.js version).
   - The seeded admin still cannot approve its own production request (#82); the UI only shows the 403.
+  - POST /api/chat has min_length=1 and NO maximum message length (backend, unchanged in Phase 12);
+    the 2000-character cap in the UI is not a control. The server keeps the last 20 messages per user
+    (#29) and the UI cannot clear them; the transcript on screen is lost on logout or reload.
+  - After every login three read-only admin GETs run even while Chat is shown; a non-admin gets three
+    403s there (#108). The chat example chips use notification-service STAGING, which only
+    junior_developer_1 owns: for other users they show an Ownership BLOCK (kept on purpose).
+  - Simulated log lines have levels that do not match their text (random generator, #11); ML never
+    reads log content.
   - No ML summary charts (#100 not built). Charts, if built later, are an illustration, never E1-E6
     evidence (the counts include test traffic).
-- Process notes: all decisions #90-#107 were written before the code that uses them. #106 copied the
+- Process notes: all decisions #90-#110 were written before the code that uses them. #106 copied the
   reference's icon-only exit control as the only log out control, which the user could not find; #107
   fixed it. The assistant never ran any code in Phase 12 (no sandbox runs); every test, build and
   smoke result above comes from the user's own runs.
@@ -407,10 +433,18 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
 
 ## Open items
 - Demo 8 (prompt injection) conflicts with #11 (no anomalous log content) and #27 (tool calls after a
-  tool result are ignored). Resolve before Phase 16/17.
+  tool result are ignored). Resolve before Phase 16/17 (decide in that phase's Step 0). The chat screen
+  does not change this: one tool call per turn still holds.
+- Evaluation data mix (decide in Phase 13 Step 0 for training data, again before Phase 16 for E1-E6):
+  tests, smoke runs, the dashboard and the chat all write to the SAME dev DB (#41). It holds QA-... test
+  rows, smoke rows, old "interim: not enforced" rows (#58), live chat rows and the synthetic set.
+  Training and evaluation must not mix with them: use a separate evaluation DB, or tag and exclude
+  rows by rule (source marker #65, request_id prefixes). Nothing to do before then.
 - Phase 12 optional follow-ups (not required): Stage 3 summary charts (#100: counts only, 3 plain
   bars, "demo data" label); sessionStorage if the reload logout annoys (#95); a service_state_history
-  view (#94); event filters or pagination (#93); investigate the 4 npm vulnerabilities.
+  view (#94); event filters or pagination (#93); investigate the 4 npm vulnerabilities; change the
+  chat example chips so they fit the viva user (#109); a server-side maximum message length for
+  /api/chat (a backend change, needs its own decision).
 - Phase 13 (dataset/features): training reads source='synthetic', inference windows read
   source='live' only (#65). Anomaly/staged categories, labels and sequence ids need a
   `scenario`/label column or a side file, i.e. another migration (#64). Apply the #68 gate (version
@@ -438,7 +472,8 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
   revalidation queries + MCP + resolve.
 - Final report must state: #82 (admin self-approval), #84 (re-lookup, strict snapshot), #79 (no
   risk_level in responses), #55 (window key), #91 (admin-only dashboard), #95 (memory token), #102
-  (provisional colours), #106 (risk bar shows a level) and the other known limitations listed above.
+  (provisional colours), #106 (risk bar shows a level), #109 (chat reply as plain text, no maximum
+  message length, server-side memory) and the other known limitations listed above.
 - Full suite takes ~90-135 s locally. Likely argon2 hashing in `make_user`; not diagnosed. Optional:
   `pytest tests -q --durations=8`.
 
@@ -446,13 +481,13 @@ Agent reply text is not evidence; evaluation uses Gateway decisions and DB state
 Dataset finalization and ML feature engineering (Section 27 Phase 13; Sections 10, 23, 24; M4). Before
 coding: read Planning Sections 10, 23, 24, 25 (E2, E6) and decisions #55, #59, #64-#68, #73-#75, #85;
 resolve the Phase 13 items in Open items (label/scenario column or side file, volume and mix, index,
-pending and blocked rows, the #68 gate). Write new decisions.md entries BEFORE the first line of code,
+pending and blocked rows, the #68 gate, and the evaluation data mix). Write new decisions.md entries BEFORE the first line of code,
 for all of them including small details. Phase 13 adds no new phases; the Isolation Forest is Phase 14.
 Any existing test that must change is listed and approved first. Phase 12 added no backend change after
 `4e96b8d`, so the Phase 13 backend baseline is 468/468 passing.
 
 ## Important
-- Follow Planning Revision 6 and `docs/decisions.md` (107 entries).
+- Follow Planning Revision 6 and `docs/decisions.md` (110 entries).
 - Do not reorder, remove, or add phases. Do not redo Phase 1-12 unless asked.
 - Anything genuinely undecided mid-implementation gets a new decisions.md
   entry BEFORE code, not after.
