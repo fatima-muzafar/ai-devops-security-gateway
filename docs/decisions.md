@@ -1220,3 +1220,38 @@ control; it has no text and sits far from the username, so the user could not fi
 text button "Log out" is added in the top header right beside the username, same handler as the
 sidebar icon (clears the in-memory session and returns to the hero, #95, #105). The sidebar icon
 stays. No backend change. Limitation: two controls do the same thing. Status: new decision (user report).
+
+## 108. Chat Screen: Scope and Navigation (user request; optional extension of Phase 12)
+Section 4 draws Developer -> Next.js frontend -> backend -> agent, and M1 lists "chat", but Section 27
+assigns no UI to it. Resolved: a chat view inside the existing page. No new phase, no new route (#90),
+no backend change, no new endpoint. The sidebar now has three icons: Chat, Dashboard, Log out. This
+REPLACES #106's three jump icons with one Dashboard icon. After login the view is CHAT for everyone:
+the UI does not know the role (no role claim, #44) and chat works for every role. Both views stay
+mounted (the inactive one is hidden) so the transcript and the panel data survive switching tabs.
+A non-admin who opens Dashboard sees the server's "Forbidden." in each panel (#98: the UI checks no
+role). The login text changes from "admin account" to "your account".
+Limitation: three read-only admin GETs run after every login even while Chat is shown; a non-admin
+gets three 403s there. Status: new decision.
+
+## 109. Chat Screen: Behaviour and Rendering
+Only POST /api/chat, through lib/api.ts (sendChat), body {message}. Shown: the user message; the agent
+reply as PLAIN TEXT (white-space pre-wrap; never HTML or markdown: the reply is untrusted LLM output,
+#92); a decision badge when `decision` is not null; a muted line "agent proposed: <tool_request JSON
+text>"; the request_id. One message at a time (the call is synchronous and can take seconds): input and
+Send are off and a "Thinking..." line shows while waiting. 401 -> login ("Session expired", #95); any
+other error -> red notice "HTTP n: detail" (502 = model unavailable, nothing executed, #27). The input
+has a 2000-character cap (UX only, NOT a security control). Three example-prompt chips fill the input
+and never send. The transcript is React state only (lost on logout or reload); the SERVER keeps the
+last 20 messages per user (#29) and the UI cannot clear them (no endpoint). Not built: streaming,
+markdown, history table (#21), clear button, upload.
+Backend limitation to state in the report: ChatIn has min_length=1 and no maximum length.
+Status: new decision (extends #18, #23, #27, #87, #92).
+
+## 110. Chat Screen: Files and Style
+All style stays in dashboard.css (#99, #102, #106): reuse panel, badge, button, input, notice; new
+classes are chat-* only (bubbles: user right with an accent border, agent left on the surface), plus
+.side-link-active and .content[hidden]. No new colour token. New file components/chat-panel.tsx.
+Edited: icons.tsx (chat, dashboard), lib/types.ts (ChatResult), lib/api.ts (sendChat), dashboard.tsx,
+login-form.tsx, dashboard.css. No frontend tests (#99); the browser smoke replaces them.
+Limitation: the chat uses the real Gemini free tier (#16): rate limits show as a 502 notice.
+Status: new decision (implementation detail; no plan change).
