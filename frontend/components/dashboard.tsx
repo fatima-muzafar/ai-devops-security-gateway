@@ -2,21 +2,26 @@
 
 import { useCallback, useState } from "react";
 import ApprovalsPanel from "./approvals-panel";
+import ChatPanel from "./chat-panel";
 import EventsPanel from "./events-panel";
 import Hero from "./hero";
 import { Icon, LogoMark } from "./icons";
 import LoginForm, { type Session } from "./login-form";
 import ServicesPanel from "./services-panel";
 
+type Tab = "chat" | "dashboard";
+
 export default function Dashboard() {
   // The token lives in React memory only (decisions.md #95): a page reload logs out.
   const [session, setSession] = useState<Session | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [view, setView] = useState<"hero" | "login">("hero"); // decisions.md #105
+  const [tab, setTab] = useState<Tab>("chat"); // decisions.md #108: chat first, for every role
   const [reloadKey, setReloadKey] = useState(0);
 
   const handleLoggedIn = useCallback((s: Session) => {
     setNotice(null);
+    setTab("chat");
     setSession(s);
   }, []);
   const handleUnauthorized = useCallback(() => {
@@ -42,7 +47,8 @@ export default function Dashboard() {
     );
   }
 
-  // Layout: icon sidebar + top header (decisions.md #106)
+  // Layout: icon sidebar + top header (decisions.md #106, #108). Both views stay mounted;
+  // the inactive one is hidden so the chat transcript and the panel data survive a tab switch.
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -50,15 +56,24 @@ export default function Dashboard() {
           <LogoMark />
         </div>
         <nav className="sidebar-nav">
-          <a className="side-link" href="#events" title="Security Events" aria-label="Security Events">
-            <Icon kind="events" />
-          </a>
-          <a className="side-link" href="#approvals" title="Approvals" aria-label="Approvals">
-            <Icon kind="approvals" />
-          </a>
-          <a className="side-link" href="#services" title="Mock Services" aria-label="Mock Services">
-            <Icon kind="services" />
-          </a>
+          <button
+            className={tab === "chat" ? "side-link side-link-active" : "side-link"}
+            type="button"
+            onClick={() => setTab("chat")}
+            title="Chat with the agent"
+            aria-label="Chat with the agent"
+          >
+            <Icon kind="chat" />
+          </button>
+          <button
+            className={tab === "dashboard" ? "side-link side-link-active" : "side-link"}
+            type="button"
+            onClick={() => setTab("dashboard")}
+            title="Admin dashboard"
+            aria-label="Admin dashboard"
+          >
+            <Icon kind="dashboard" />
+          </button>
         </nav>
         <button
           className="side-link side-logout"
@@ -73,14 +88,17 @@ export default function Dashboard() {
       <div className="shell-main">
         <header className="shell-top">
           <h1 className="shell-title">Security Gateway</h1>
-          <span className="shell-sub">Admin dashboard</span>
+          <span className="shell-sub">{tab === "chat" ? "DevOps agent chat" : "Admin dashboard"}</span>
           <span className="shell-space" />
           <span className="shell-user">{session.username}</span>
           <button className="button shell-logout" type="button" onClick={handleLogout}>
             Log out
           </button>
         </header>
-        <main className="content">
+        <main className="content" hidden={tab !== "chat"}>
+          <ChatPanel token={session.token} onUnauthorized={handleUnauthorized} />
+        </main>
+        <main className="content" hidden={tab !== "dashboard"}>
           <EventsPanel
             token={session.token}
             reloadKey={reloadKey}

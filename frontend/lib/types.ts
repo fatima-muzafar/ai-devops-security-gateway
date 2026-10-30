@@ -61,6 +61,13 @@ export interface ApprovalItem {
   risk: Risk | null;
 }
 
+export interface ChatResult {
+  request_id: string;
+  reply: string;
+  tool_request: Record<string, unknown> | null;
+  decision: Decision | null;
+}
+
 export interface DecisionResult {
   approval_id: number;
   request_id: string;

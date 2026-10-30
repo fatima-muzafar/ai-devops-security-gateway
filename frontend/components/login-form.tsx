@@ -46,7 +46,7 @@ export default function LoginForm({ notice, onLoggedIn, onBack }: Props) {
         </span>
         <h1 className="login-title">Security Gateway</h1>
       </div>
-      <p className="muted login-sub">Admin dashboard. Log in with an admin account.</p>
+      <p className="muted login-sub">Log in with your account.</p>
       {notice && <p className="notice">{notice}</p>}
       {error && <p className="notice notice-error">{error}</p>}
       <label className="field">

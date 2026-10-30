@@ -4,6 +4,7 @@
 import type {
   ApprovalItem,
   ApprovalStatus,
+  ChatResult,
   DecisionResult,
   LoginResult,
   MockService,
@@ -71,6 +72,10 @@ async function request<T>(
 
 export function login(username: string, password: string): Promise<LoginResult> {
   return request<LoginResult>("POST", "/api/auth/login", { body: { username, password } });
+}
+
+export function sendChat(token: string, message: string): Promise<ChatResult> {
+  return request<ChatResult>("POST", "/api/chat", { token, body: { message } });
 }
 
 export function getEvents(token: string): Promise<SecurityEvent[]> {

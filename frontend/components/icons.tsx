@@ -1,5 +1,5 @@
 // Inline SVG icons and the logo mark (decisions.md #106). Colours come from dashboard.css.
-export type IconKind = "events" | "approvals" | "services" | "logout";
+export type IconKind = "events" | "approvals" | "services" | "logout" | "chat" | "dashboard";
 
 export function Icon({ kind }: { kind: IconKind }) {
   return (
@@ -24,6 +24,13 @@ export function Icon({ kind }: { kind: IconKind }) {
           <path d="M3 16l9 5 9-5" />
         </>
       )}
+      {kind === "chat" && (
+        <>
+          <path d="M4 5h16v11H9l-5 4z" />
+          <path d="M8 9h8M8 12h5" />
+        </>
+      )}
+      {kind === "dashboard" && <path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />}
       {kind === "logout" && (
         <>
           <path d="M10 4H5v16h5" />
